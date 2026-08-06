@@ -1,0 +1,65 @@
+# fanpro configuration.
+#
+# Default policy is deliberately conservative, and the reason is measured,
+# not assumed: on Apple Silicon the firmware does NOT override a fan held in
+# manual mode. Verified on a Mac Studio M3 Ultra (macOS 26.3) on 2026-08-06 --
+# a fan commanded to 1000 rpm stayed at 1000 rpm while the machine reached
+# 72 C and the firmware ramped the fan it still controlled to 2519 rpm.
+# See docs/smc_reference.md.
+#
+# The consequence: while fanpro holds a fan, fanpro is the only thermal
+# protection that fan has. So the shipped curve is derived from the firmware's
+# own measured response and sits at or above it at every temperature.
+
+[general]
+# auto   leave every fan to macOS. fanpro only monitors. always safe.
+# curve  drive fans from the curves below.
+mode = auto
+
+log_level = info
+# Consecutive failed sensor samples before fans are handed back to firmware.
+max_sample_failures = 3
+
+# Panic thresholds per sensor class. Any class over its limit sends the fans
+# to maximum, then releases control entirely.
+panic_soc_c = 95
+panic_gpu_c = 95
+panic_nand_c = 80
+panic_ambient_c = 70
+
+# The firmware permits a stopped fan. fanpro does not, unless you say so.
+allow_fan_stop = false
+
+[fan.0]
+curve = safe
+
+[fan.1]
+curve = safe
+
+# Derived from the measured firmware curve, with margin at every point.
+# Firmware measured: 55C~1130, 60C~1160, 64C~1374, 67C~1782, 70C~2298, 71C+~2510.
+[curve.safe]
+source = class:soc
+points = 50:1000, 55:1200, 60:1300, 64:1500, 67:1900, 70:2400, 73:2900, 78:max
+hysteresis_c = 2
+# Asymmetric on purpose: ramp up fast because that direction protects the
+# hardware, ramp down slowly so the machine does not audibly pulse.
+slew_up_rpm = 400
+slew_down_rpm = 100
+# Above this the upward rate limit is bypassed entirely.
+spike_temp_c = 85
+
+# Quieter than the firmware below 70 C. Only sensible if you accept that
+# fanpro alone is protecting these fans; read the note at the top first.
+[curve.quiet]
+source = class:soc
+points = 55:1000, 65:1200, 70:1800, 75:2600, 80:max
+hysteresis_c = 3
+slew_up_rpm = 500
+slew_down_rpm = 80
+spike_temp_c = 82
+
+[alert.hot_soc]
+source = class:soc
+above_c = 85
+notify = true

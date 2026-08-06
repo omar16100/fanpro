@@ -1,0 +1,6 @@
+-std=c11
+-Iinclude
+-Itests
+-D_DARWIN_C_SOURCE
+-Wall
+-Wextra

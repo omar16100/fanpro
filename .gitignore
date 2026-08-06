@@ -1,0 +1,15 @@
+# build output
+build/
+*.o
+*.d
+*.a
+*.dSYM/
+
+# macOS
+.DS_Store
+
+# editors
+*.swp
+*~
+.vscode/
+.idea/

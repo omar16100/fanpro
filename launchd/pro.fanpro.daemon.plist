@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>pro.fanpro.daemon</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/sbin/fanprod</string>
+  </array>
+
+  <!--
+    KeepAlive restarts the daemon if it exits. That matters more here than
+    usual: this machine's firmware will not reclaim a fan left in manual
+    mode, so a restarted daemon running its startup recovery is the only
+    thing that frees a fan a crashed daemon left pinned.
+  -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!--
+    Restarts closer together than this are treated as a crash loop. The
+    daemon notices the unclean-exit marker and latches itself into
+    monitor-only mode rather than re-pinning the fans on every restart.
+  -->
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardErrorPath</key>
+  <string>/var/log/fanpro/fanprod.err</string>
+</dict>
+</plist>

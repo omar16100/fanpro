@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: make
+
+      # The suite needs no hardware, no root and no real time: the SMC
+      # backend, the clock and the sensor sampler are all injectable, and
+      # the fake firmware models the behaviours that matter.
+      - name: Test
+        run: make test
+
+      - name: Fail on compiler warnings
+        run: |
+          make clean
+          make 2>&1 | tee /tmp/build.log
+          if grep -q "warning:" /tmp/build.log; then
+            echo "build produced warnings:"
+            grep "warning:" /tmp/build.log
+            exit 1
+          fi
