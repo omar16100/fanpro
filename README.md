@@ -2,14 +2,7 @@
 
 Fan control and thermal monitoring for Apple Silicon Macs. A command-line tool, a live terminal dashboard, and a root daemon. Written in C with no dependencies beyond what macOS ships.
 
-```
-$ fanpro fans
-fan       rpm      min      max   target  mode
-0        1008     1000     3625     1000  auto
-1        1008     1000     3625     1000  auto
-
-mode key: F%dmd   Ftst: absent
-```
+![fanpro top, monitoring only](docs/images/fanpro-top.png)
 
 Monitoring works as an ordinary user with nothing installed. Driving the fans needs the daemon, and is off by default.
 
@@ -22,6 +15,12 @@ Monitoring works as an ordinary user with nothing installed. Driving the fans ne
 This was measured, not assumed. On a Mac Studio M3 Ultra under a 144 W load, a fan commanded to 1000 RPM stayed at 1021 RPM while the SoC reached 72 °C and the fan still under firmware control ramped to 2519 RPM. Zero of 390 samples showed the firmware intervening. The raw trace is in [`data/06082026_thermal_authority.log`](data/06082026_thermal_authority.log) and the analysis is in [`docs/engineering-log.md`](docs/engineering-log.md).
 
 The consequence is simple and important: **while fanpro holds a fan, fanpro is the only thermal protection that fan has.** Manual control does not mean "the fan does what I ask" — it means that fan has left the system's thermal management.
+
+Because custody matters this much, the dashboard is built around it. Each fan gets a track across its real range: `●` is where the fan actually is, `▲` is where it has been told to go, and the owner column says who is responsible for it. Cyan means fanpro is driving that fan and is the only thing protecting it. Grey means the firmware still has it.
+
+![fanpro top, driving fan 0](docs/images/fanpro-top-control.png)
+
+Above, fan 0 is climbing toward a commanded 1900 RPM under fanpro's control while fan 1 sits at its minimum under the firmware's.
 
 That is why:
 
@@ -44,7 +43,7 @@ You are still driving your own hardware. Use `fanpro smc probe` first, keep the 
 - CPU and GPU power draw
 - SSD temperature
 - Full SMC key dump with types and raw bytes, for anyone poking at this hardware
-- `fanpro top`, a live dashboard with sparklines
+- `fanpro top`, a live dashboard showing fan custody, thermal headroom and trend
 
 **Control** — needs the daemon and admin rights:
 
@@ -127,6 +126,8 @@ fanpro smc dump                 every SMC key with type and value
 fanpro smc get <key>            one key
 fanpro top                      live dashboard
 ```
+
+`fanpro top` works with or without the daemon. Without it, everything is read-only and the owner column reads `firmware` throughout. Hotkeys go through the same IPC path as the CLI, so the dashboard holds no privileges of its own. It uses Unicode box glyphs where the terminal supports them and falls back to ASCII where it does not.
 
 ```
 $ fanpro power
