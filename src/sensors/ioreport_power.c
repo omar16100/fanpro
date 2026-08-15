@@ -50,7 +50,6 @@ static struct {
 	 * so one subscription serves every sample; only the delta pair is
 	 * per-call.  See docs/15082026_ioreport_subscription_leak_plan.md.
 	 */
-	bool                   subscribed;
 	char                   group[FANPRO_POWER_NAME_MAX];
 	CFMutableDictionaryRef subbed;
 	void                  *sub;
@@ -317,7 +316,6 @@ real_teardown(void)
 		CFRelease((CFTypeRef)g_ior.sub);
 		g_ior.sub = NULL;
 	}
-	g_ior.subscribed = false;
 }
 
 /* Discover the energy group and subscribe to it.  0 on success. */
@@ -326,6 +324,11 @@ real_subscribe(void)
 {
 	CFMutableDictionaryRef group_chans;
 	CFStringRef group_cf;
+
+	/* The state machine never calls this while holding one, but subscribing
+	 * over the top of a live subscription would leak 235.7 KB with no way to
+	 * notice, so make the precondition explicit rather than assumed. */
+	real_teardown();
 
 	if (!ioreport_load())
 		return -2;
@@ -353,13 +356,17 @@ real_subscribe(void)
 	g_ior.sub = g_ior.create_subscription(NULL, group_chans, &g_ior.subbed, 0,
 	                                      NULL);
 	if (g_ior.sub == NULL || g_ior.subbed == NULL) {
+		/* group_chans is deliberately not released here.  Ownership passes
+		 * to create_subscription on success; on failure the SPI is
+		 * undocumented and releasing a dictionary it may already have
+		 * consumed would be a double-release, which is worse than leaking
+		 * one dictionary on a path the backoff already rate-limits. */
 		FANPRO_WARN("power.subscribe", "reason=subscription_failed group=%s",
 		            g_ior.group);
 		real_teardown();
 		return -4;
 	}
 
-	g_ior.subscribed = true;
 	FANPRO_INFO("power.subscribe", "group=%s", g_ior.group);
 	return 0;
 }
@@ -557,6 +564,13 @@ void
 fanpro_power_shutdown(void)
 {
 	ops_teardown();
+
+	/* Symmetric with fanpro_power_invalidate.  Unreachable in the daemon,
+	 * where shutdown runs after the control loop has exited, but leaving the
+	 * skip window armed would mean a restarted sampler silently refusing to
+	 * sample for up to 64 calls. */
+	g_consec_failures = 0;
+	g_skip_remaining = 0;
 }
 
 int

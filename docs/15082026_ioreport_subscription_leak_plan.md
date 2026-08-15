@@ -131,12 +131,15 @@ Note honestly: 2 and 3 are the ones that matter and both need either a live GPU/
 or a seam. If the seam is too invasive for this change, 2 alone behind `check-live` is
 the minimum acceptable coverage, and that limitation goes in the doc.
 
-## Logging
+## Logging (as built)
 
-- `INFO power.subscribe group=%s channels=%d` once, at first subscription.
-- `WARN power.resubscribe reason=sample_null` on invalidation, with a count so a
-  wake-loop is visible in the log rather than silent.
-- Keep the existing per-sample `FANPRO_DEBUG("power.sample", ...)` unchanged.
+- `INFO power.subscribe group=%s` once, at each subscription. On the live daemon this
+  appeared exactly once for the whole run, which is what makes the fix observable in the
+  log rather than only in RSS.
+- `WARN power.resubscribe reason=stale_sample rc=%d` when a held subscription is replaced.
+- `WARN power.backoff consec_failures=%u skip_samples=%u` when the skip window widens, so
+  a degraded SPI is visible rather than silent.
+- The existing per-sample `FANPRO_DEBUG("power.sample", ...)` is unchanged.
 
 ## Docs to update in the same commit
 
@@ -148,7 +151,7 @@ the minimum acceptable coverage, and that limitation goes in the doc.
 
 ## Result
 
-- `make test`: 3729 checks, 0 failures (8 new hermetic tests for the state machine).
+- `make test`: 3733 checks, 0 failures (10 new hermetic tests for the state machine).
 - `make check-live`: real IOReport, **rss 13776 -> 13808 kb over 40 samples (+32 KB)**,
   subscribe count 1. The same 40 samples on the old code would have leaked ~9.4 MB.
 

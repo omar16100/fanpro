@@ -12,8 +12,8 @@
  * retried once per sample).  That state machine is what is tested here.
  *
  * These run through the injected-ops seam and never touch IOReport, so they are
- * hermetic and fast.  The real IOReport plumbing is covered by the live test in
- * test_sensors.c.
+ * hermetic and fast.  The real IOReport plumbing is covered by the FANPRO_LIVE
+ * test at the bottom of this file.
  */
 #include "tinytest.h"
 
@@ -88,11 +88,17 @@ static const fanpro_power_ops_t FAKE_OPS = {
 	fake_sample_delta,
 };
 
+/*
+ * Order matters.  fanpro_power_set_ops tears down through whatever ops are
+ * currently installed, so installing the fake FIRST and zeroing AFTER means a
+ * test that forgot its closing set_ops(NULL) cannot leak a teardown count into
+ * the next test's baseline.
+ */
 static void
 fake_reset(void)
 {
-	memset(&g_fake, 0, sizeof(g_fake));
 	fanpro_power_set_ops(&FAKE_OPS);
+	memset(&g_fake, 0, sizeof(g_fake));
 }
 
 /* ---- the tests ---------------------------------------------------------- */

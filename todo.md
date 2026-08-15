@@ -17,8 +17,8 @@ Running status log. Newest first.
   `fanpro_power_shutdown` (daemon exit).
 - Added a `fanpro_power_ops_t` test seam and `tests/test_power.c` (8 hermetic tests) so
   the state machine is provable without IOReport.
-- `make test` 3729 checks / 0 failures. `make check-live` +32 KB over 40 real samples,
-  subscribe count 1.
+- `make test` 3733 checks / 0 failures (10 hermetic power tests). `make check-live` +32 KB
+  over 40 real samples, subscribe count 1.
 - Docs: `c4model.md` component row, `engineering-log.md` measurements,
   `docs/15082026_ioreport_subscription_leak_plan.md`, `docs/index.md`.
 
@@ -27,6 +27,13 @@ reached 13.28 GB after 9d 06h and released both fans cleanly. New PID 93421 held
 14,864 KB for 21 consecutive 30s samples** (t+8:00 to t+18:01); the only growth was 144 KB
 of warm-up. `power.subscribe` logged exactly once; `power.backoff`/`power.resubscribe`
 never fired.
+
+**Known gaps (from pre-push review):** when IOReport returns zero usable channels the
+daemon reports 0.00 W rather than "unavailable" in the UI and history, because
+`publish_snapshot` zero-fills; `set->available` catches "no channels" but not "channels
+present but semantically wrong". A cumulative counter that wraps between the two samples
+would pass the `raw <= 0` guard and yield an absurd watt figure. Both are observability
+hardening, not leak issues.
 
 **Still untested in production:** the backoff and resubscribe paths (IOReport has not
 failed) and sleep/wake invalidation (machine has 11 days uptime, has not slept since).
