@@ -152,12 +152,37 @@ the minimum acceptable coverage, and that limitation goes in the doc.
 - `make check-live`: real IOReport, **rss 13776 -> 13808 kb over 40 samples (+32 KB)**,
   subscribe count 1. The same 40 samples on the old code would have leaked ~9.4 MB.
 
+### Verified live on the installed daemon (2026-08-15 19:13)
+
+`make install` + `launchctl kickstart -k system/pro.fanpro.daemon`. The outgoing process
+(PID 29738, up 9d 06h) had reached **13.28 GB RSS**; it released both fans cleanly on the
+way out (`unlock.release_all failures=0`).
+
+New process (PID 93421) started at 14 MB. RSS over the following 18 minutes:
+
+    t+00:30   14720 kb     +0 kb
+    t+03:30   14800 kb    +80 kb
+    t+06:00   14832 kb   +112 kb
+    t+08:00   14864 kb   +144 kb
+    t+10:00   14864 kb   +144 kb
+    ...
+    t+18:01   14864 kb   +144 kb     <- 21 consecutive samples, zero growth
+
+All 144 KB of growth is warm-up in the first 8 minutes; the last 10 minutes are
+byte-for-byte flat. The old code at 19.2 KB/s would have added ~20 MB over the same 18
+minutes.
+
+Log confirms the mechanism, not just the outcome:
+
+- `power.subscribe group=Energy Model` appears **exactly once** for the whole run
+- `power.backoff` and `power.resubscribe`: **zero** occurrences, so the recovery paths are
+  untested in production. They are covered only by the injected-ops tests.
+
 ### Still unverified
 
-The installed daemon has not been swapped. Everything above exercises the library through
-the test binary; replacing `/usr/local/sbin/fanprod` and confirming that a live `fanprod`
-holds flat RSS across a few hours needs root and has not been done. Until then the fix is
-proven at the library level and inferred at the daemon level.
+The backoff and resubscribe paths have not fired on real hardware, because IOReport has
+not failed. Sleep/wake invalidation is likewise untested live: this machine has 11 days of
+uptime and has not slept since the fix went in.
 
 ## Out of scope (found during investigation, filed separately)
 

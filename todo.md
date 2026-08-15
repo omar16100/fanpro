@@ -22,8 +22,14 @@ Running status log. Newest first.
 - Docs: `c4model.md` component row, `engineering-log.md` measurements,
   `docs/15082026_ioreport_subscription_leak_plan.md`, `docs/index.md`.
 
-**Not done:** the installed `/usr/local/sbin/fanprod` has not been swapped, so the fix is
-verified at the library level only. Needs root plus a few hours of observation.
+**Verified live 2026-08-15 19:13.** Installed and restarted. Outgoing PID 29738 had
+reached 13.28 GB after 9d 06h and released both fans cleanly. New PID 93421 held **flat at
+14,864 KB for 21 consecutive 30s samples** (t+8:00 to t+18:01); the only growth was 144 KB
+of warm-up. `power.subscribe` logged exactly once; `power.backoff`/`power.resubscribe`
+never fired.
+
+**Still untested in production:** the backoff and resubscribe paths (IOReport has not
+failed) and sleep/wake invalidation (machine has 11 days uptime, has not slept since).
 
 ## Open, found during the same investigation
 
