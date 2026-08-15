@@ -37,6 +37,44 @@ typedef struct {
  */
 int fanpro_power_sample(fanpro_power_set_t *set, unsigned interval_ms);
 
+/*
+ * Drop the retained IOReport subscription.  The next sample resubscribes.
+ *
+ * Call this after wake: nothing in the IOReport SPI promises a subscription
+ * survives a sleep cycle, and a stale one reports nothing rather than failing
+ * loudly.  Must be called from the same thread that samples.
+ */
+void fanpro_power_invalidate(void);
+
+/* Release the retained subscription at exit.  Idempotent. */
+void fanpro_power_shutdown(void);
+
+/*
+ * Test seam.
+ *
+ * fanpro_power_sample owns a small state machine (subscribe once, resubscribe
+ * on failure, back off when resubscribing keeps failing) that must be provable
+ * without IOReport: the bug this seam exists for was a subscription leaked once
+ * per sample, and an RSS assertion is too allocator-dependent to gate on.
+ *
+ * Passing NULL restores the real IOReport implementation.  Tests only; the
+ * daemon never calls this.
+ */
+typedef struct {
+	/* Establish a subscription. 0 on success, negative on failure. */
+	int  (*subscribe)(void);
+	/* Release whatever `subscribe` established. Must tolerate no-op. */
+	void (*teardown)(void);
+	/* Sample a delta pair. 0 on success, negative on failure. */
+	int  (*sample_delta)(unsigned interval_ms, fanpro_power_set_t *set);
+} fanpro_power_ops_t;
+
+void fanpro_power_set_ops(const fanpro_power_ops_t *ops);
+
+/* Observability for the tests and for `fanpro probe`: how many times the
+ * subscription has been established since the process started. */
+unsigned fanpro_power_subscribe_count(void);
+
 /* ---- NVMe / SSD health -------------------------------------------------- */
 
 typedef struct {

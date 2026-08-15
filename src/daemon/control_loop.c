@@ -548,6 +548,14 @@ fanpro_control_loop_tick(fanpro_daemon_t *d, unsigned long long pass)
 		/* After wake, assume nothing about what the firmware did while
 		 * we were asleep; re-read it. */
 		FANPRO_INFO("daemon.wake", "action=reprobe");
+		/*
+		 * Same reasoning for the IOReport subscription: nothing in that
+		 * SPI promises one survives a sleep cycle, and a stale one
+		 * reports no channels rather than failing loudly.  Dropped here,
+		 * on the control-loop thread, because this is the only thread
+		 * that samples; power_notify.c only sets the flag.
+		 */
+		fanpro_power_invalidate();
 		{
 			fanpro_fan_set_t probe;
 

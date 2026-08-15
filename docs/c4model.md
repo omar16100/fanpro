@@ -34,6 +34,7 @@ Boundary rule: **no SMC write occurs outside `fanprod`.** `fanpro` never opens a
 | smc backends | `src/smc/smc_backend_iokit.c`, `src/smc/smc_fake.c` | Real IOKit user client; in-memory fake with generation personalities |
 | sensor registry | `src/sensors/registry.c` | Merges providers, classifies sensors by class, disambiguates duplicate names, reports overflow rather than truncating |
 | sensor providers | `src/sensors/hid_temp.c`, `smc_temp.c`, `ioreport_power.c`, `nvme_smart.c`, `thermal_pressure.c` | One provider per data source, each degrading independently |
+| power subscription | `src/sensors/ioreport_power.c` | Owns one process-lifetime IOReport subscription plus the state machine around it: subscribe once, replace a held subscription that fails to sample (the expected consequence of sleep), never rebuild a subscription that was just created, and widen a skip window on repeated failure. `IOReportCreateSubscription` leaks 235.7 KB per call on macOS 26.3, so the subscription count is a correctness property, not an optimisation. Sampled only from the control-loop thread; `fanpro_power_invalidate` is called from that thread on wake. A `fanpro_power_ops_t` seam lets the state machine be tested without IOReport |
 | fan model | `src/fan/fan.c` | Fan enumeration and per-fan state from SMC keys |
 | unlock | `src/fan/unlock.c` | Manual-control state machine and `Ftst` refcount |
 | curve | `src/fan/curve.c` | Pure temperature-to-RPM evaluation, hysteresis, asymmetric slew |

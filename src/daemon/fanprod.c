@@ -322,6 +322,10 @@ out:
 	fanpro_heartbeat_stop();
 	fanpro_ipc_stop();
 	fanpro_smc_close(&g_daemon.smc);
+	/* After the threads are stopped, so nothing can sample into a released
+	 * subscription.  Hygiene rather than correctness: process exit would
+	 * reclaim it anyway. */
+	fanpro_power_shutdown();
 
 	/*
 	 * Only claim a clean exit if the fans really went back.  Otherwise
