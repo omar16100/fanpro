@@ -94,6 +94,53 @@ In fairness to the old code, exploitability was low: the only config string reac
 
 **Drift detection watched modes but not targets.** Another tool rewriting `F%dTg` while fanpro held the mode key persisted indefinitely, because the deadband compared against fanpro's own stale record and skipped the corrective write.
 
+## The IOReport subscription leak
+
+Found 2026-08-14 while diagnosing an unrelated WindowServer watchdog kill. `fanprod` (PID
+29738, up 8 days) held **11.97 GB RSS**, growing at a measured **+1152 KB per 60 s = 19.2
+KB/s = 1.6 GB/day**.
+
+The cause was not the HID sensor path, which was the obvious suspect because it opens and
+closes an `IOHIDEventSystemClient` once per second and shows up in WindowServer's log as
+connection churn. Measured, that path costs 0.13 KB per poll: negligible.
+
+It was `IOReportCreateSubscription`, called once per power sample. Isolating repro
+(`build/powerleak.c`, 200 iterations, RSS sampled after a 5-iteration warm-up):
+
+| pattern | leak per iteration |
+|---|---|
+| `IOReportCopyAllChannels` only | +4.4 KB, decaying (fragmentation, not a leak) |
+| `IOReportCreateSubscription` per sample | **+235.7 KB, dead-linear** |
+| full sample (subscribe + sample) | +237.5 KB |
+| subscribe once, then sample repeatedly | **+0.16 KB, decaying to flat** |
+
+The slope over the last five checkpoints of the leaking case was 235.7, 235.8, 235.7,
+235.7, 235.6, 235.4 KB/iter. Constant to four significant figures is a leak, not a growing
+working set.
+
+The arithmetic closes, which is what makes this a complete diagnosis rather than a
+plausible one. The control loop samples power every 10 passes and the measured tick period
+is ~1.3 s (60 passes per 78 s in `fanprod.log`), so power is sampled every 13.0 s:
+
+    235.7 KB / 13.0 s = 18.1 KB/s predicted vs 19.2 KB/s measured
+
+Within 6%, so there is no second leak to look for.
+
+After the fix, 40 real IOReport samples through `make check-live` moved RSS by **+32 KB**
+with exactly one subscription. The same 40 samples on the old code would have leaked
+~9.4 MB.
+
+Two design points came out of adversarial review and are load-bearing:
+
+- **Backoff is part of the fix, not politeness.** Every resubscribe costs another 235.7 KB
+  whether or not it then works, so a permanently broken SPI must not be retried once per
+  sample. The skip window widens 2, 4, 8, 16, 32, 64 samples, which at the daemon's cadence
+  bounds a broken SPI to roughly one subscription per 14 minutes instead of one per 13 s.
+- **A freshly created subscription that fails is not rebuilt.** Retrying only makes sense
+  for a subscription we had been holding, which may have gone stale across sleep. If one
+  created moments ago already fails, IOReport is broken rather than stale, and building
+  another leaks 235.7 KB to learn the same thing.
+
 ## Testing notes
 
 The control plane is testable without hardware because the SMC backend, the clock and the sensor sampler are all injectable. The in-memory fake models the firmware behaviours that actually bite: typed keys, absent keys answering `0x84`, mode-3 rejection with `0x82`, the `Ftst` yield delay on a virtual clock, and `Ftst` being cleared taking every manual fan with it.

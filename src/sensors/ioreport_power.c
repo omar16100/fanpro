@@ -43,6 +43,16 @@ typedef int64_t (*io_report_simple_get_integer_value_fn)(CFDictionaryRef, int32_
 static struct {
 	bool  tried;
 	void *handle;
+	/*
+	 * Retained subscription.  IOReportCreateSubscription leaks a measured
+	 * 235.7 KB per call on macOS 26.3 (Mac15,14), so calling it once per
+	 * sample cost this daemon 1.6 GB/day.  Energy counters are cumulative,
+	 * so one subscription serves every sample; only the delta pair is
+	 * per-call.  See docs/15082026_ioreport_subscription_leak_plan.md.
+	 */
+	char                   group[FANPRO_POWER_NAME_MAX];
+	CFMutableDictionaryRef subbed;
+	void                  *sub;
 	io_report_copy_all_channels_fn       copy_all_channels;
 	io_report_copy_group_fn              copy_channels_in_group;
 	io_report_create_subscription_fn     create_subscription;
@@ -290,35 +300,43 @@ find_energy_group(char *out, size_t out_len)
 	return found;
 }
 
-int
-fanpro_power_sample(fanpro_power_set_t *set, unsigned interval_ms)
+/*
+ * Release the retained subscription.  Safe to call on a partially built one:
+ * create_subscription can hand back a subscription with no `subbed` dictionary
+ * or vice versa, and leaking either half would defeat the point of this file.
+ */
+static void
+real_teardown(void)
 {
-	CFMutableDictionaryRef group_chans = NULL, subbed = NULL;
-	CFDictionaryRef first = NULL, second = NULL, delta = NULL;
-	CFStringRef group_cf = NULL;
-	CFArrayRef items;
-	char group[FANPRO_POWER_NAME_MAX] = { 0 };
-	void *sub = NULL;
-	uint64_t t0, elapsed;
-	double seconds;
-	CFIndex n, i;
-	int found = 0;
+	if (g_ior.subbed != NULL) {
+		CFRelease(g_ior.subbed);
+		g_ior.subbed = NULL;
+	}
+	if (g_ior.sub != NULL) {
+		CFRelease((CFTypeRef)g_ior.sub);
+		g_ior.sub = NULL;
+	}
+}
 
-	if (set == NULL)
-		return -1;
+/* Discover the energy group and subscribe to it.  0 on success. */
+static int
+real_subscribe(void)
+{
+	CFMutableDictionaryRef group_chans;
+	CFStringRef group_cf;
 
-	memset(set, 0, sizeof(*set));
+	/* The state machine never calls this while holding one, but subscribing
+	 * over the top of a live subscription would leak 235.7 KB with no way to
+	 * notice, so make the precondition explicit rather than assumed. */
+	real_teardown();
 
 	if (!ioreport_load())
 		return -2;
 
-	if (interval_ms == 0)
-		interval_ms = 200;
-
-	if (!find_energy_group(group, sizeof(group)))
+	if (!find_energy_group(g_ior.group, sizeof(g_ior.group)))
 		return -3;
 
-	group_cf = CFStringCreateWithCString(kCFAllocatorDefault, group,
+	group_cf = CFStringCreateWithCString(kCFAllocatorDefault, g_ior.group,
 	                                     kCFStringEncodingUTF8);
 	if (group_cf == NULL)
 		return -3;
@@ -326,7 +344,8 @@ fanpro_power_sample(fanpro_power_set_t *set, unsigned interval_ms)
 	group_chans = g_ior.copy_channels_in_group(group_cf, NULL, 0, 0, 0);
 	CFRelease(group_cf);
 	if (group_chans == NULL) {
-		FANPRO_WARN("power.sample", "reason=no_group_channels group=%s", group);
+		FANPRO_WARN("power.subscribe", "reason=no_group_channels group=%s",
+		            g_ior.group);
 		return -3;
 	}
 
@@ -334,20 +353,41 @@ fanpro_power_sample(fanpro_power_set_t *set, unsigned interval_ms)
 	 * IOReportCreateSubscription CONSUMES the channels dictionary.
 	 * Releasing it afterwards is a double-release; ownership passes here.
 	 */
-	sub = g_ior.create_subscription(NULL, group_chans, &subbed, 0, NULL);
-	group_chans = NULL;
-	if (sub == NULL || subbed == NULL) {
-		FANPRO_WARN("power.sample", "reason=subscription_failed group=%s",
-		            group);
+	g_ior.sub = g_ior.create_subscription(NULL, group_chans, &g_ior.subbed, 0,
+	                                      NULL);
+	if (g_ior.sub == NULL || g_ior.subbed == NULL) {
+		/* group_chans is deliberately not released here.  Ownership passes
+		 * to create_subscription on success; on failure the SPI is
+		 * undocumented and releasing a dictionary it may already have
+		 * consumed would be a double-release, which is worse than leaking
+		 * one dictionary on a path the backoff already rate-limits. */
+		FANPRO_WARN("power.subscribe", "reason=subscription_failed group=%s",
+		            g_ior.group);
+		real_teardown();
 		return -4;
 	}
+
+	FANPRO_INFO("power.subscribe", "group=%s", g_ior.group);
+	return 0;
+}
+
+static int
+real_sample_delta(unsigned interval_ms, fanpro_power_set_t *set)
+{
+	CFDictionaryRef first = NULL, second = NULL, delta = NULL;
+	CFArrayRef items;
+	uint64_t t0, elapsed;
+	double seconds;
+	CFIndex n, i;
+	int found = 0;
+	int rc = -5;
 
 	/* Energy counters are cumulative, so a single read is meaningless:
 	 * watts come from a delta over a measured interval. */
 	t0 = now_ms();
-	first = g_ior.create_samples(sub, subbed, NULL);
+	first = g_ior.create_samples(g_ior.sub, g_ior.subbed, NULL);
 	sleep_ms(interval_ms);
-	second = g_ior.create_samples(sub, subbed, NULL);
+	second = g_ior.create_samples(g_ior.sub, g_ior.subbed, NULL);
 	elapsed = now_ms() - t0;
 
 	if (first == NULL || second == NULL) {
@@ -406,20 +446,201 @@ fanpro_power_sample(fanpro_power_set_t *set, unsigned interval_ms)
 	set->available = set->count > 0;
 	FANPRO_DEBUG("power.sample",
 	             "group=%s channels=%d raw=%d total_w=%.2f elapsed_ms=%llu",
-	             group, set->count, found, set->total_watts,
+	             g_ior.group, set->count, found, set->total_watts,
 	             (unsigned long long)elapsed);
+	rc = set->available ? 0 : -5;
 
 done:
+	/*
+	 * Only the per-sample objects are released here.  g_ior.sub and
+	 * g_ior.subbed are retained across calls and are freed by real_teardown
+	 * alone; releasing them here is what leaked 235.7 KB per sample.
+	 */
 	if (delta != NULL)
 		CFRelease(delta);
 	if (second != NULL)
 		CFRelease(second);
 	if (first != NULL)
 		CFRelease(first);
-	if (subbed != NULL)
-		CFRelease(subbed);
-	if (sub != NULL)
-		CFRelease((CFTypeRef)sub);
 
-	return set->available ? 0 : -5;
+	return rc;
+}
+
+/* ---- state machine ------------------------------------------------------ */
+
+/*
+ * Injected ops, or NULL for the real IOReport ones.  Only the tests set this.
+ */
+static const fanpro_power_ops_t *g_ops;
+
+/*
+ * Authoritative for the state machine, and deliberately separate from
+ * g_ior.subscribed so the injected-ops path obeys the same subscribe-once rule
+ * as the real one.  That rule is the entire fix, so the tests must be able to
+ * observe it without IOReport.
+ */
+static bool     g_subscribed;
+static unsigned g_subscribe_count;
+static unsigned g_consec_failures;
+static unsigned g_skip_remaining;
+
+/* Largest number of samples to skip after repeated failure.  At the daemon's
+ * ~13 s sampling period this is roughly 14 minutes between attempts, which
+ * bounds the damage if a future macOS breaks the SPI: one subscription per 14
+ * minutes instead of one per sample. */
+#define POWER_MAX_SKIP 64u
+
+static int
+ops_subscribe(void)
+{
+	return g_ops != NULL ? g_ops->subscribe() : real_subscribe();
+}
+
+static void
+ops_teardown(void)
+{
+	if (g_ops != NULL)
+		g_ops->teardown();
+	else
+		real_teardown();
+
+	g_subscribed = false;
+}
+
+static int
+ops_sample_delta(unsigned interval_ms, fanpro_power_set_t *set)
+{
+	return g_ops != NULL ? g_ops->sample_delta(interval_ms, set)
+	                     : real_sample_delta(interval_ms, set);
+}
+
+static void
+record_failure(void)
+{
+	if (g_consec_failures < 6u)
+		g_consec_failures++;
+
+	g_skip_remaining = 1u << g_consec_failures;
+	if (g_skip_remaining > POWER_MAX_SKIP)
+		g_skip_remaining = POWER_MAX_SKIP;
+
+	FANPRO_WARN("power.backoff", "consec_failures=%u skip_samples=%u",
+	            g_consec_failures, g_skip_remaining);
+}
+
+void
+fanpro_power_set_ops(const fanpro_power_ops_t *ops)
+{
+	ops_teardown();
+	g_ops = ops;
+	g_subscribe_count = 0;
+	g_consec_failures = 0;
+	g_skip_remaining = 0;
+}
+
+unsigned
+fanpro_power_subscribe_count(void)
+{
+	return g_subscribe_count;
+}
+
+void
+fanpro_power_invalidate(void)
+{
+	ops_teardown();
+
+	/*
+	 * Clearing the backoff is the point, not a side effect.  Wake is new
+	 * information: the reason sampling was failing before the machine slept
+	 * says nothing about whether it will fail now, and leaving a widened
+	 * skip window in place would silently swallow the next 64 samples
+	 * (roughly 14 minutes) of the very reprobe this call exists to trigger.
+	 */
+	g_consec_failures = 0;
+	g_skip_remaining = 0;
+}
+
+void
+fanpro_power_shutdown(void)
+{
+	ops_teardown();
+
+	/* Symmetric with fanpro_power_invalidate.  Unreachable in the daemon,
+	 * where shutdown runs after the control loop has exited, but leaving the
+	 * skip window armed would mean a restarted sampler silently refusing to
+	 * sample for up to 64 calls. */
+	g_consec_failures = 0;
+	g_skip_remaining = 0;
+}
+
+int
+fanpro_power_sample(fanpro_power_set_t *set, unsigned interval_ms)
+{
+	int attempt;
+	int rc = -4;
+
+	if (set == NULL)
+		return -1;
+
+	memset(set, 0, sizeof(*set));
+
+	if (interval_ms == 0)
+		interval_ms = 200;
+
+	/*
+	 * Backing off after repeated failure is not politeness, it is the leak
+	 * guard: every resubscribe costs 235.7 KB whether or not it then works,
+	 * so a permanently broken SPI must not be retried once per sample.
+	 */
+	if (g_skip_remaining > 0u) {
+		g_skip_remaining--;
+		return -6;
+	}
+
+	/*
+	 * Two attempts, never recursive: the first uses whatever subscription we
+	 * hold, and if sampling fails the subscription is torn down so the second
+	 * establishes a fresh one.  A stale subscription after wake is the
+	 * expected reason to land here.
+	 */
+	for (attempt = 0; attempt < 2; attempt++) {
+		bool fresh = false;
+
+		if (!g_subscribed) {
+			rc = ops_subscribe();
+			if (rc != 0) {
+				record_failure();
+				return rc;
+			}
+			g_subscribed = true;
+			g_subscribe_count++;
+			fresh = true;
+		}
+
+		rc = ops_sample_delta(interval_ms, set);
+		if (rc == 0) {
+			g_consec_failures = 0;
+			g_skip_remaining = 0;
+			return 0;
+		}
+
+		ops_teardown();
+		memset(set, 0, sizeof(*set));
+
+		/*
+		 * Only a subscription we had been holding is worth replacing: it
+		 * may have gone stale across a sleep, which is the case this
+		 * retry exists for.  If a subscription created moments ago
+		 * already failed to sample, IOReport is broken rather than
+		 * stale, and building another one would just leak 235.7 KB to
+		 * learn the same thing.
+		 */
+		if (fresh)
+			break;
+
+		FANPRO_WARN("power.resubscribe", "reason=stale_sample rc=%d", rc);
+	}
+
+	record_failure();
+	return rc;
 }

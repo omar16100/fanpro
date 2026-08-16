@@ -187,6 +187,19 @@ TT_DECL(alert_ignores_unusable_values);
 TT_DECL(alert_rules_evaluate_independently);
 TT_DECL(history_format_truncation_never_overflows);
 
+/* power sampling state machine */
+TT_DECL(power_subscribes_once_across_many_samples);
+TT_DECL(power_resubscribes_once_on_stale_subscription);
+TT_DECL(power_retry_is_bounded_not_looping);
+TT_DECL(power_fresh_subscription_failure_is_not_retried);
+TT_DECL(power_backs_off_after_repeated_failure);
+TT_DECL(power_recovers_after_backoff_expires);
+TT_DECL(power_subscribe_failure_does_not_sample);
+TT_DECL(power_invalidate_forces_one_resubscribe);
+TT_DECL(power_invalidate_clears_active_backoff);
+TT_DECL(power_null_set_is_refused);
+TT_DECL(power_real_ioreport_rss_is_bounded);
+
 int
 main(void)
 {
@@ -371,8 +384,22 @@ main(void)
 	TT_RUN(alert_rules_evaluate_independently);
 	TT_RUN(history_format_truncation_never_overflows);
 
-	if (live != NULL && live[0] == '1')
-		printf("live\n  (no live checks registered yet)\n");
+	printf("power\n");
+	TT_RUN(power_subscribes_once_across_many_samples);
+	TT_RUN(power_resubscribes_once_on_stale_subscription);
+	TT_RUN(power_retry_is_bounded_not_looping);
+	TT_RUN(power_fresh_subscription_failure_is_not_retried);
+	TT_RUN(power_backs_off_after_repeated_failure);
+	TT_RUN(power_recovers_after_backoff_expires);
+	TT_RUN(power_subscribe_failure_does_not_sample);
+	TT_RUN(power_invalidate_forces_one_resubscribe);
+	TT_RUN(power_invalidate_clears_active_backoff);
+	TT_RUN(power_null_set_is_refused);
+
+	if (live != NULL && live[0] == '1') {
+		printf("live\n");
+		TT_RUN(power_real_ioreport_rss_is_bounded);
+	}
 
 	printf("\n%d checks, %d failures\n", tt_checks, tt_failures);
 	return tt_failures == 0 ? 0 : 1;
