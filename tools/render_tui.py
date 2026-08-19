@@ -23,6 +23,12 @@ from PIL import Image, ImageDraw, ImageFont
 
 SCALE = 2  # render at 2x so the image stays crisp when scaled down
 
+# Bound the output. Image dimensions come from the input's own row and column
+# counts, so a single runaway line (tmux -J joins wrapped lines) would ask PIL
+# for a multi-gigabyte canvas. A terminal frame is never larger than this.
+MAX_COLS = 400
+MAX_ROWS = 200
+
 # A restrained dark terminal palette. Muted rather than saturated, matching
 # the instrument-panel intent of the TUI itself.
 BG_WINDOW = (18, 20, 24)
@@ -90,6 +96,15 @@ def parse(lines):
 
     while grid and not "".join(c[0] for c in grid[-1]).strip():
         grid.pop()
+
+    if len(grid) > MAX_ROWS:
+        print(f"warning: truncating {len(grid)} rows to {MAX_ROWS}", file=sys.stderr)
+        grid = grid[:MAX_ROWS]
+    for i, row in enumerate(grid):
+        if len(row) > MAX_COLS:
+            print(f"warning: truncating row {i} to {MAX_COLS} columns",
+                  file=sys.stderr)
+            grid[i] = row[:MAX_COLS]
     return grid
 
 
@@ -158,6 +173,9 @@ def render(grid, out_path, title):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        print(__doc__.strip(), file=sys.stderr)
+        sys.exit(2)
     src, dst = sys.argv[1], sys.argv[2]
     caption = sys.argv[3] if len(sys.argv) > 3 else "fanpro top"
     with open(src, encoding="utf-8", errors="replace") as fh:

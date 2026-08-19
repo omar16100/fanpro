@@ -53,6 +53,15 @@
 #define ROOM_FOR(row) ((row) < LINES - 2)
 
 /*
+ * The horizontal equivalent, and it matters for the same reason.  Text written
+ * past the right edge does not vanish: ncurses wraps it onto the next line,
+ * where it overwrites the row below.  Measured at 40 columns, "limit 95" wrapped
+ * and turned the nand row into "minand 39.0 C" -- corrupted numbers on a
+ * thermal monitor, which is worse than showing fewer of them.
+ */
+#define FITS(x, len) ((x) >= 0 && (x) + (int)(len) <= width)
+
+/*
  * Colour roles, not colour names.  Muted instrument-panel tones: this is a
  * gauge cluster you glance at, not a chart you study, and saturated primaries
  * on every row destroy the glance.
@@ -398,9 +407,17 @@ fanpro_cmd_top(fanpro_smc_t *smc, int argc, char **argv)
 		attron(COLOR_PAIR(CP_NAME) | A_BOLD);
 		mvprintw(row, 0, "fanpro");
 		attroff(COLOR_PAIR(CP_NAME) | A_BOLD);
-		attron(COLOR_PAIR(CP_LABEL));
-		mvprintw(row, 7, "%s", model);
-		attroff(COLOR_PAIR(CP_LABEL));
+		{
+			/* Drop the model rather than let the state text land on top
+			 * of it; at 20 columns this rendered as "fanpro Mmonitor". */
+			int state_len = 12; /* longest state string, checked below */
+
+			if (FITS(7, strlen(model) + 2 + state_len)) {
+				attron(COLOR_PAIR(CP_LABEL));
+				mvprintw(row, 7, "%s", model);
+				attroff(COLOR_PAIR(CP_LABEL));
+			}
+		}
 
 		{
 			const char *state;
@@ -419,9 +436,11 @@ fanpro_cmd_top(fanpro_smc_t *smc, int argc, char **argv)
 				state = "monitor only";
 				pair = CP_LABEL;
 			}
-			attron(COLOR_PAIR(pair));
-			mvprintw(row, width - (int)strlen(state), "%s", state);
-			attroff(COLOR_PAIR(pair));
+			if (FITS(width - (int)strlen(state), strlen(state))) {
+				attron(COLOR_PAIR(pair));
+				mvprintw(row, width - (int)strlen(state), "%s", state);
+				attroff(COLOR_PAIR(pair));
+			}
 		}
 		row++;
 		draw_rule(row++, width);
@@ -445,12 +464,15 @@ fanpro_cmd_top(fanpro_smc_t *smc, int argc, char **argv)
 				attron(COLOR_PAIR(CP_TRACK));                         \
 				mvprintw(row, VALUE_COL + 6, "%s", G_DEGREE);        \
 				attroff(COLOR_PAIR(CP_TRACK));                        \
-				draw_meter(row, VALUE_COL + 10, METER_W,              \
-				           (value) / (limit), p);                     \
-				attron(COLOR_PAIR(CP_TRACK));                         \
-				mvprintw(row, VALUE_COL + 10 + METER_W + 2,           \
-				         "limit %.0f", (limit));                      \
-				attroff(COLOR_PAIR(CP_TRACK));                        \
+				if (FITS(VALUE_COL + 10, METER_W))                    \
+					draw_meter(row, VALUE_COL + 10, METER_W,      \
+					           (value) / (limit), p);             \
+				if (FITS(VALUE_COL + 10 + METER_W + 2, 9)) {          \
+					attron(COLOR_PAIR(CP_TRACK));                 \
+					mvprintw(row, VALUE_COL + 10 + METER_W + 2,   \
+					         "limit %.0f", (limit));              \
+					attroff(COLOR_PAIR(CP_TRACK));                \
+				}                                                     \
 				row++;                                                \
 			} while (0)
 
@@ -463,11 +485,14 @@ fanpro_cmd_top(fanpro_smc_t *smc, int argc, char **argv)
 			attron(COLOR_PAIR(CP_TRACK));
 			mvprintw(row, LABEL_COL, "trend");
 			attroff(COLOR_PAIR(CP_TRACK));
-			spark_draw(row, VALUE_COL + 10, &soc_spark);
-			attron(COLOR_PAIR(CP_TRACK));
-			mvprintw(row, VALUE_COL + 10 + SPARK_WIDTH + 2, "%ds soc",
-			         soc_spark.n);
-			attroff(COLOR_PAIR(CP_TRACK));
+			if (FITS(VALUE_COL + 10, SPARK_WIDTH))
+				spark_draw(row, VALUE_COL + 10, &soc_spark);
+			if (FITS(VALUE_COL + 10 + SPARK_WIDTH + 2, 9)) {
+				attron(COLOR_PAIR(CP_TRACK));
+				mvprintw(row, VALUE_COL + 10 + SPARK_WIDTH + 2, "%ds soc",
+				         soc_spark.n);
+				attroff(COLOR_PAIR(CP_TRACK));
+			}
 			row++;
 		}
 		row++;
@@ -477,9 +502,14 @@ fanpro_cmd_top(fanpro_smc_t *smc, int argc, char **argv)
 			goto legend;
 		label(row, 0, "FANS");
 		attron(COLOR_PAIR(CP_TRACK));
-		mvprintw(row, VALUE_COL + 10, "%s", "min");
-		mvprintw(row, VALUE_COL + 10 + GAUGE_W - 3, "%s", "max");
-		mvprintw(row, VALUE_COL + 10 + GAUGE_W + 3, "%s", "owner");
+		/* Same rule as the rows below: label the gauge only when the gauge
+		 * itself will be drawn. */
+		if (FITS(VALUE_COL + 10, GAUGE_W) &&
+		    FITS(VALUE_COL + 10 + GAUGE_W + 3, 8)) {
+			mvprintw(row, VALUE_COL + 10, "%s", "min");
+			mvprintw(row, VALUE_COL + 10 + GAUGE_W - 3, "%s", "max");
+			mvprintw(row, VALUE_COL + 10 + GAUGE_W + 3, "%s", "owner");
+		}
 		attroff(COLOR_PAIR(CP_TRACK));
 		row++;
 
@@ -502,11 +532,31 @@ fanpro_cmd_top(fanpro_smc_t *smc, int argc, char **argv)
 			mvprintw(row, VALUE_COL - 1, "%5.0f", f->rpm);
 			attroff(COLOR_PAIR(owned ? CP_OWNED : CP_VALUE) | A_BOLD);
 
-			draw_fan_gauge(row, VALUE_COL + 10, GAUGE_W, f, owned);
+			/*
+			 * Gauge and owner compete for the same row.  Draw both only
+			 * when both fit; otherwise drop the gauge and keep the owner,
+			 * because "who holds this fan" matters more on a cramped
+			 * screen than where in its range it sits.  Placing the owner
+			 * at a fallback column WITHOUT dropping the gauge just wrote
+			 * one on top of the other.
+			 */
+			{
+				int gx = VALUE_COL + 10;
+				int ox = gx + GAUGE_W + 3;
+				bool both = FITS(gx, GAUGE_W) && FITS(ox, strlen(owner));
 
-			attron(COLOR_PAIR(owned ? CP_OWNED : CP_TRACK));
-			mvprintw(row, VALUE_COL + 10 + GAUGE_W + 3, "%s", owner);
-			attroff(COLOR_PAIR(owned ? CP_OWNED : CP_TRACK));
+				if (!both)
+					ox = VALUE_COL + 6;
+
+				if (both)
+					draw_fan_gauge(row, gx, GAUGE_W, f, owned);
+
+				if (FITS(ox, strlen(owner))) {
+					attron(COLOR_PAIR(owned ? CP_OWNED : CP_TRACK));
+					mvprintw(row, ox, "%s", owner);
+					attroff(COLOR_PAIR(owned ? CP_OWNED : CP_TRACK));
+				}
+			}
 			row++;
 		}
 		row++;
@@ -514,13 +564,20 @@ fanpro_cmd_top(fanpro_smc_t *smc, int argc, char **argv)
 		/* ---- power and the system's own thermal opinion ---- */
 		if (ROOM_FOR(row)) {
 			label(row, 0, "POWER");
+			/* 26 columns of "cpu ... gpu ..."; the pressure block below
+			 * starts at width - 26, so both fit only past ~62 columns. */
+			#define POWER_TEXT_W 26
 			attron(COLOR_PAIR(CP_VALUE));
-			if (have_daemon)
-				mvprintw(row, VALUE_COL + 1, "cpu %5.2f W   gpu %6.2f W",
-				         daemon_status.cpu_watts, daemon_status.gpu_watts);
-			else
+			if (have_daemon) {
+				if (FITS(VALUE_COL + 1, POWER_TEXT_W))
+					mvprintw(row, VALUE_COL + 1,
+					         "cpu %5.2f W   gpu %6.2f W",
+					         daemon_status.cpu_watts,
+					         daemon_status.gpu_watts);
+			} else if (FITS(VALUE_COL + 1, 35)) {
 				mvprintw(row, VALUE_COL + 1, "%s",
 				         "start the daemon for power readings");
+			}
 			attroff(COLOR_PAIR(CP_VALUE));
 
 			if (have_daemon) {
@@ -531,12 +588,15 @@ fanpro_cmd_top(fanpro_smc_t *smc, int argc, char **argv)
 				               : (daemon_status.thermal_level > 0 ? CP_WARM
 				                                                  : CP_TRACK);
 
-				attron(COLOR_PAIR(CP_TRACK));
-				mvprintw(row, width - 26, "system pressure");
-				attroff(COLOR_PAIR(CP_TRACK));
-				attron(COLOR_PAIR(pair));
-				mvprintw(row, width - 10, "%s", lv);
-				attroff(COLOR_PAIR(pair));
+				if (FITS(width - 26, 26) &&
+				    width - 26 > VALUE_COL + 1 + POWER_TEXT_W) {
+					attron(COLOR_PAIR(CP_TRACK));
+					mvprintw(row, width - 26, "system pressure");
+					attroff(COLOR_PAIR(CP_TRACK));
+					attron(COLOR_PAIR(pair));
+					mvprintw(row, width - 10, "%s", lv);
+					attroff(COLOR_PAIR(pair));
+				}
 			}
 			row++;
 		}
@@ -585,13 +645,46 @@ legend:
 				case '=':
 				case '-':
 				case '_': {
-					double now = fans.fans[selected].target;
+					const fanpro_fan_t *sel = &fans.fans[selected];
+					bool owned = have_daemon &&
+					             selected < daemon_status.n_fans &&
+					             daemon_status.fans[selected].held;
+					double now;
 					double want;
 
-					if (!isfinite(now) || now <= 0.0)
-						now = fans.fans[selected].rpm;
+					/*
+					 * Base the adjustment on the target only while we are
+					 * actually driving this fan.  F%dTg keeps its last
+					 * written value after a release, so a fan held at 6000,
+					 * released, and idling at 1200 would otherwise jump to
+					 * 6200 on a single keypress: the gauge hides that stale
+					 * target, so the number the user sees and the number the
+					 * key acts on would disagree.
+					 */
+					if (owned && sel->has_target && isfinite(sel->target) &&
+					    sel->target > 0.0)
+						now = sel->target;
+					else
+						now = sel->rpm;
+
+					/*
+					 * Both reads failing in one refresh leaves rpm and target
+					 * at -1.  Stepping from there yields 199, which the
+					 * daemon dutifully clamps up to the minimum: a transient
+					 * SMC hiccup plus a keypress would pin the fan instead of
+					 * reporting the problem.
+					 */
+					if (!isfinite(now) || now <= 0.0) {
+						snprintf(message, sizeof(message),
+						         "fan %d speed is unreadable right now; "
+						         "not sending a command.", selected);
+						break;
+					}
+
 					want = (ch == '+' || ch == '=') ? now + 200.0
 					                                : now - 200.0;
+					if (want < 0.0)
+						want = 0.0;
 					if (send_simple(FANPRO_VERB_SET_FAN, selected, want, 0,
 					                err, sizeof(err)) != 0)
 						snprintf(message, sizeof(message), "%s", err);
