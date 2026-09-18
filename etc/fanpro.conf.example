@@ -8,8 +8,12 @@
 # See docs/smc_reference.md.
 #
 # The consequence: while fanpro holds a fan, fanpro is the only thermal
-# protection that fan has. So the shipped curve is derived from the firmware's
-# own measured response and sits at or above it at every temperature.
+# protection that fan has. The shipped curve is derived from the firmware's
+# measured response on the rising limb of a cold start, and sits at or above
+# THAT limb above ~53 C. It does not bound the firmware's settled response,
+# which is path dependent: measured at 2500 rpm while the SoC fell from 72 C
+# to 63 C under unchanged load, where this curve commands 1450. Run
+# `fanpro fans` and compare before enabling curve mode on a warm machine.
 
 [general]
 # auto   leave every fan to macOS. fanpro only monitors. always safe.
@@ -23,9 +27,19 @@ max_sample_failures = 3
 # Panic thresholds per sensor class. Any class over its limit sends the fans
 # to maximum, then releases control entirely.
 panic_soc_c = 95
-panic_gpu_c = 95
 panic_nand_c = 80
-panic_ambient_c = 70
+# A panic threshold only guards a class some sensor actually reports; one set
+# for an empty class is inert, and the daemon now warns about it once at
+# startup (`safety.coverage ... reason=threshold_guards_nothing`).
+#
+# On Mac15,14 neither of these resolves, so both are left out rather than
+# shipped looking live:
+#   panic_gpu_c     - no GPU temperature sensor is enumerated
+#   panic_ambient_c - the four Ta0* keys are a firmware placeholder, not a
+#                     thermistor, and 70 C is not a sane enclosure limit
+# Set them if `fanpro sensors` shows readings in those classes on your Mac.
+# panic_gpu_c = 95
+# panic_ambient_c = 70
 
 # The firmware permits a stopped fan. fanpro does not, unless you say so.
 allow_fan_stop = false

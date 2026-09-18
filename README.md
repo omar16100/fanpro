@@ -25,12 +25,12 @@ Above, fan 0 is climbing toward a commanded 1900 RPM under fanpro's control whil
 That is why:
 
 - fanpro ships in **monitor-only mode**. It will not touch a fan until you deliberately enable curve mode.
-- The default curve is **derived from the firmware's own measured response** and sits at or above it at every temperature, so enabling fanpro never makes your machine run hotter than leaving it alone.
+- The default curve is **derived from the firmware's own measured response** on the rising limb of a cold start, where it sits at or above that limb above ~53 °C. It does **not** bound the firmware in general: the firmware's fan policy is path dependent and uses state fanpro cannot read, so on a machine whose fans are already elevated, enabling curve mode **will slow them down**. Check `fanpro fans` first and compare against the curve before handing over.
 - Every code path that loses confidence — a stale sensor, a wedged loop, an unclean exit, another tool competing for the fans — **releases the fans back to the firmware** rather than carrying on.
 
 This measurement is from one machine. It is very likely to hold across Apple Silicon, but fanpro cannot promise that for hardware nobody has tested. `fanpro smc hold` will tell you what your Mac does.
 
-You are still driving your own hardware. Use `fanpro smc probe` first, keep the conservative defaults unless you have a reason not to, and do not set a fan below what the firmware would have chosen at that temperature.
+You are still driving your own hardware. Use `fanpro smc probe` first, keep the conservative defaults unless you have a reason not to, and do not set a fan below what the firmware would have chosen at that temperature. Note that the shipped `safe` curve itself does not satisfy that last rule against the firmware's settled response: run `fanpro fans` and compare before you hand over.
 
 ---
 
@@ -246,14 +246,16 @@ spike_temp_c = 85
 
 Below the first point and above the last, the curve holds flat rather than extrapolating.
 
-**The shipped `safe` curve is not invented.** It is derived from the firmware's own measured response, with margin at every point:
+**The shipped `safe` curve is not invented**, but its margin is narrower than this table once read. It is derived from the firmware's response on the **rising limb of one cold-start ramp**, and it carries margin against that limb only:
 
-| SoC | Firmware | `safe` |
+| SoC | Firmware, rising limb | `safe` |
 |---|---|---|
 | 55 °C | ~1130 | 1200 |
 | 64 °C | ~1374 | 1500 |
 | 67 °C | ~1782 | 1900 |
 | 70 °C | ~2298 | 2400 |
+
+**The firmware's RPM is not a function of temperature, so this table does not bound it.** In the same trace the firmware held ~2500 RPM while the SoC fell from 72 °C to 63 °C under unchanged load: at 64 °C it reads 1374 RPM rising and 2507 RPM later, a 1.8x spread at one temperature. Against that settled behaviour the `safe` curve is **below** the firmware everywhere under ~70.6 °C, by up to 1049 RPM at 63 °C. See [`docs/engineering-log.md`](docs/engineering-log.md).
 
 ### `[alert.NAME]`
 

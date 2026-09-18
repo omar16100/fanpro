@@ -2,6 +2,60 @@
 
 Running status log. Newest first.
 
+## 2026-09-18 - thermal custody findings (branch `fix/thermal-custody-findings-18092026`)
+
+Prompted by 15 `Thermal Emergency Sleep` events, 14:37:54-14:40:41, then a reboot.
+Cause was three ~185 W LLM benchmark arms taking the SoC to 83.2 °C. fanpro was
+holding both fans at 3625 (max) at the instant of the first sleep, so it did not
+cause the emergency and could not have prevented it. Full write-up:
+[`docs/18092026_thermal_custody_findings_plan.md`](docs/18092026_thermal_custody_findings_plan.md).
+
+**Done.**
+
+- Fixed the mode/set race: `fanpro mode curve && fanpro set all 3625` was unwinnable
+  because the IPC thread acked a queued set-mode before the loop applied it, so the
+  set-fan gate read the stale `cfg.mode` and refused. Worse than a refusal: the mode
+  change still landed, and the `safe` curve then pulled both fans 2500 -> 1180 RPM,
+  cooling less than not intervening. Gate now uses `fanpro_daemon_effective_mode()`.
+  Loop remains the sole writer of `cfg`. Refusal message no longer tells the user to
+  run the command they just ran.
+- Rejected the `Ta0*` firmware placeholder (`00 00 20 41`, exactly 10.0) in
+  `smc_temp.c`, the same way exactly 0.0 already was. It was being filed under the
+  ambient class as a finite reading, making `panic_ambient_c = 70` a guard permanently
+  60 °C clear of its threshold.
+- Added a one-shot `safety.coverage` warning for any panic threshold on a class with no
+  enumerated sensors, after the first successful enumeration. Catches the dead ambient
+  class and the dead GPU class below.
+- Fixed the atexit handler unconditionally clearing the clean-exit marker that `main`
+  deliberately leaves when its release fails, which meant that latch could never fire.
+- `ProcessType` Background -> Interactive in the plist.
+- Narrowed the false "sits at or above the firmware at every temperature" claim in
+  `README.md`, `docs/engineering-log.md` and `etc/fanpro.conf.example`. The firmware's
+  RPM is path dependent: 1374 rising vs 2510 settled at the same 64.0 °C in our own
+  trace. Commented out `panic_gpu_c` and `panic_ambient_c` in the example config.
+- `make test` 3760 checks / 0 failures (was 3733). Placeholder test verified to fail
+  when the rejection is disabled.
+
+**Not deployed.** Installed `/usr/local/sbin/fanprod` is from 15 Aug; HEAD is four
+commits ahead, including the IOReport leak fix. Deploying ships those too.
+
+**Next, needs a decision.**
+
+- `fanpro_unlock_release_all` clears `manual[]` before the writes and zeros
+  `manual_count` even on failure; caller ignores the result and bumps
+  `release_generation`. A failed release can be reported as confirmed while the
+  hardware stays pinned. Highest-risk item found.
+- Heartbeat latch policy: the two reviews disagree on whether a stall should latch.
+  Deeper issue both raise: the flag is only read by a loop that is merely slow, so a
+  wedged loop never sees it and `KeepAlive` will not restart a hung process.
+- Root cause of the stalls is still unknown. Both the CPU-starvation and the
+  leaked-subscription hypotheses were tested and refuted (stalls happen only near
+  idle, and at pass 8640 as well as 1,762,920). Needs per-phase tick timings.
+- `set all auto` / `daemon release` can reacquire in the same tick; sleep release
+  silently discards `manual_override`; monitor-only still releases a fan another
+  controller owns; panic hysteresis clears on SoC whichever class tripped;
+  `fanpro status` labels every latch "previous run exited uncleanly".
+
 ## 2026-08-15 - IOReport subscription leak (branch `fix/ioreport-subscription-leak`)
 
 **Done.**

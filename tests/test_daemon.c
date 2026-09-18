@@ -673,3 +673,102 @@ TT_TEST(daemon_persistent_target_theft_latches)
 
 	drig_down(&r);
 }
+
+/*
+ * The mode/set race.  `fanpro mode curve && fanpro set all 3625` used to be
+ * unwinnable: the IPC thread acked the mode change before the control loop
+ * applied it, so the set gate read the still-AUTO cfg.mode and refused the
+ * speed.  Observed live on 2026-09-18, where the refusal dropped the pin and
+ * left the default curve to pull both fans from 2500 to 1180 rpm, i.e.
+ * cooling LESS than not intervening at all.
+ *
+ * Zero ticks between push and query is the whole point: a test that ticks
+ * first would pass against the broken code.
+ */
+TT_TEST(effective_mode_sees_a_queued_switch_before_any_tick)
+{
+	drig_t r;
+	fanpro_request_t req;
+
+	drig_up(&r, "[general]\nmode = auto\n");
+
+	TT_TRUE(fanpro_daemon_effective_mode(&r.d) == FANPRO_MODE_AUTO);
+
+	fanpro_request_init(&req, FANPRO_VERB_SET_MODE);
+	req.ival = 1; /* curve */
+	TT_TRUE(fanpro_daemon_push_cmd(&r.d, &req));
+
+	/* Pending, with no tick having run. */
+	TT_TRUE(fanpro_daemon_effective_mode(&r.d) == FANPRO_MODE_CURVE);
+	/* Still only pending: the loop remains the sole writer of cfg. */
+	TT_TRUE(r.d.cfg.mode == FANPRO_MODE_AUTO);
+
+	drig_down(&r);
+}
+
+TT_TEST(effective_mode_uses_the_latest_queued_switch)
+{
+	drig_t r;
+	fanpro_request_t req;
+
+	drig_up(&r, "[general]\nmode = auto\n");
+
+	fanpro_request_init(&req, FANPRO_VERB_SET_MODE);
+	req.ival = 1; /* curve */
+	TT_TRUE(fanpro_daemon_push_cmd(&r.d, &req));
+
+	fanpro_request_init(&req, FANPRO_VERB_SET_MODE);
+	req.ival = 0; /* back to auto before either is applied */
+	TT_TRUE(fanpro_daemon_push_cmd(&r.d, &req));
+
+	/* Slot order is arrival order, so the last request wins. */
+	TT_TRUE(fanpro_daemon_effective_mode(&r.d) == FANPRO_MODE_AUTO);
+
+	drig_down(&r);
+}
+
+TT_TEST(effective_mode_matches_applied_mode_once_the_queue_drains)
+{
+	drig_t r;
+	fanpro_request_t req;
+
+	drig_up(&r, "[general]\nmode = auto\n");
+
+	fanpro_request_init(&req, FANPRO_VERB_SET_MODE);
+	req.ival = 1;
+	TT_TRUE(fanpro_daemon_push_cmd(&r.d, &req));
+
+	set_soc(50.0);
+	tick(&r, 1);
+
+	/* Queue empty now, so this reads through to the applied value. */
+	TT_TRUE(r.d.cfg.mode == FANPRO_MODE_CURVE);
+	TT_TRUE(fanpro_daemon_effective_mode(&r.d) == FANPRO_MODE_CURVE);
+
+	drig_down(&r);
+}
+
+/*
+ * panic_ambient_c = 70 shipped in the default config while this hardware
+ * reports no ambient sensor at all, so the threshold guarded nothing and
+ * said nothing.  Warn once, after the first successful enumeration.
+ */
+TT_TEST(a_panic_threshold_guarding_no_sensor_is_reported_once)
+{
+	drig_t r;
+
+	/* stub_sensors supplies a soc reading only; ambient stays empty. */
+	drig_up(&r, "[general]\nmode = auto\npanic_ambient_c = 70\n");
+
+	TT_TRUE(!r.d.warned_unguarded_classes);
+	set_soc(50.0);
+	tick(&r, 1);
+	TT_TRUE(r.d.warned_unguarded_classes);
+
+	/* Second pass must not re-warn. */
+	set_soc(50.0);
+	tick(&r, 1);
+	TT_TRUE(r.d.warned_unguarded_classes);
+
+	drig_down(&r);
+}

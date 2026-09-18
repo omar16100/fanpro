@@ -9,6 +9,9 @@
 
 #include "fanpro/sensors.h"
 
+#include "fanpro/smc.h"
+#include "fanpro/smc_fake.h"
+
 #include <math.h>
 #include <string.h>
 
@@ -156,4 +159,44 @@ TT_TEST(sensor_aggregation_skips_invalid)
 
 	TT_NEAR(fanpro_sensors_max(&set), 48.0, 0.001);
 	TT_NEAR(fanpro_sensors_avg_matching(&set, "tdie"), 48.0, 0.001);
+}
+
+/*
+ * Ta0* on Mac15,14 returns the flt payload 00 00 20 41, exactly 10.0, on all
+ * four keys and on ftA0.  It is a firmware placeholder, not a measurement,
+ * and registry.c files Ta0* under the ambient class.  Admitting it turned
+ * panic_ambient_c into a guard permanently 60 C clear of its own threshold:
+ * strictly worse than an empty class, because safety.c honours a finite
+ * reading and only skips a non-finite one.
+ */
+TT_TEST(smc_temp_rejects_the_firmware_placeholder_reading)
+{
+	fanpro_fake_t *fake = fanpro_fake_create(FANPRO_FAKE_DIRECT_OK);
+	fanpro_smc_t smc;
+	fanpro_sensor_set_t set;
+
+	/* The placeholder, and a real reading on the same type and path. */
+	fanpro_fake_add_key(fake, "Ta0P", "flt ", 4, 10.0);
+	fanpro_fake_add_key(fake, "TB0p", "flt ", 4, 48.125);
+
+	TT_EQ_INT(fanpro_smc_open(&smc, fanpro_fake_backend(fake)), 0);
+	memset(&set, 0, sizeof(set));
+	TT_TRUE(fanpro_smc_temp_read(&set, &smc) >= 1);
+
+	/* The real one is kept. */
+	TT_TRUE(isfinite(fanpro_sensors_max_of_class(&set, FANPRO_CLASS_OTHER)));
+	/* The placeholder is dropped, so the ambient class stays empty and
+	 * safety.c keeps failing open on it rather than trusting 10 C. */
+	TT_TRUE(!isfinite(
+	    fanpro_sensors_max_of_class(&set, FANPRO_CLASS_AMBIENT)));
+
+	fanpro_smc_close(&smc);
+	fanpro_fake_destroy(fake);
+}
+
+/* Pin the classification the placeholder rejection depends on. */
+TT_TEST(sensor_classify_puts_ta0_keys_in_the_ambient_class)
+{
+	TT_EQ_INT(fanpro_sensor_classify("Ta09"), FANPRO_CLASS_AMBIENT);
+	TT_EQ_INT(fanpro_sensor_classify("Ta0P"), FANPRO_CLASS_AMBIENT);
 }

@@ -71,6 +71,12 @@ typedef struct {
 	/* Clean ticks seen since the last drift, used to decay the strikes. */
 	int                  drift_clean_ticks;
 	fanpro_alert_state_t alert_state[FANPRO_MAX_ALERTS];
+	/*
+	 * Set once the first successful enumeration has been checked for panic
+	 * thresholds that guard a class no sensor reports.  Per-daemon rather
+	 * than a function-static so each test starts clean.
+	 */
+	bool                 warned_unguarded_classes;
 	/* History and alerts are off in tests: both do IO. */
 	bool                 record_history;
 	/*
@@ -162,6 +168,15 @@ void fanpro_power_notify_stop(void);
 
 /* Push a validated command.  Returns false when the queue is full. */
 bool fanpro_daemon_push_cmd(fanpro_daemon_t *d, const fanpro_request_t *req);
+
+/*
+ * The mode the daemon is going to be in, which is not always the mode it is
+ * in right now: a queued set-mode is only applied when the loop next drains
+ * the queue, up to tick_ms later.  The IPC thread must gate a manual speed
+ * on this rather than on cfg.mode, or `fanpro mode curve && fanpro set ...`
+ * loses the race and the set is refused after the mode request was accepted.
+ */
+fanpro_mode_t fanpro_daemon_effective_mode(fanpro_daemon_t *d);
 
 /* Clean-exit marker, for the crash-loop latch. */
 bool fanpro_daemon_previous_exit_was_clean(const char *path);

@@ -55,13 +55,29 @@ on_signal(int sig)
  * as well as being called from main, because an unexpected exit path leaving
  * a fan pinned is the worst outcome available on this hardware.
  */
+/*
+ * Set when main's own release failed, so it deliberately left the unclean
+ * marker for the next start to latch on.  atexit runs after main returns, so
+ * without this the handler below would clear that marker every time and the
+ * "we could not hand the fans back" latch could never fire.
+ */
+static bool g_leave_unclean_marker = false;
+
 static void
 emergency_release(void)
 {
+	bool released_ok = true;
+
 	if (g_daemon.unlock.manual_count > 0 || g_daemon.unlock.ftst_asserted) {
 		FANPRO_ERROR("daemon.atexit", "held=%d action=release",
 		             g_daemon.unlock.manual_count);
-		fanpro_unlock_release_all(&g_daemon.unlock);
+		released_ok = (fanpro_unlock_release_all(&g_daemon.unlock) == 0);
+	}
+
+	if (g_leave_unclean_marker || !released_ok) {
+		FANPRO_ERROR("daemon.atexit",
+		             "reason=release_failed action=leaving_unclean_marker");
+		return;
 	}
 	fanpro_daemon_mark_clean_exit(g_daemon.state_path);
 }
@@ -103,6 +119,38 @@ fanpro_daemon_push_cmd(fanpro_daemon_t *d, const fanpro_request_t *req)
 	}
 	pthread_mutex_unlock(&d->cmd_lock);
 	return ok;
+}
+
+fanpro_mode_t
+fanpro_daemon_effective_mode(fanpro_daemon_t *d)
+{
+	fanpro_mode_t mode;
+	int i, latest = -1;
+
+	/*
+	 * Slot order is arrival order: push_cmd fills from slot 0 upwards and
+	 * drain_commands frees every slot in one pass, so the highest used
+	 * set-mode slot is the most recent request.  The locks are taken one
+	 * at a time, never nested, so this cannot deadlock against the loop.
+	 */
+	pthread_mutex_lock(&d->cmd_lock);
+	for (i = 0; i < FANPRO_CMD_QUEUE_LEN; i++) {
+		if (d->cmd[i].used &&
+		    d->cmd[i].req.verb == FANPRO_VERB_SET_MODE)
+			latest = i;
+	}
+	if (latest >= 0)
+		mode = (d->cmd[latest].req.ival == 1) ? FANPRO_MODE_CURVE
+		                                      : FANPRO_MODE_AUTO;
+	pthread_mutex_unlock(&d->cmd_lock);
+
+	if (latest >= 0)
+		return mode;
+
+	pthread_mutex_lock(&d->cfg_lock);
+	mode = d->cfg.mode;
+	pthread_mutex_unlock(&d->cfg_lock);
+	return mode;
 }
 
 /* ---- single instance ---------------------------------------------------- */
@@ -332,11 +380,14 @@ out:
 	 * leave the marker so the next start latches: "we could not hand the
 	 * fans back" is exactly the case the latch exists for.
 	 */
-	if (released_cleanly)
+	if (released_cleanly) {
 		fanpro_daemon_mark_clean_exit(g_daemon.state_path);
-	else
+	} else {
+		/* Tell the atexit handler not to undo this. */
+		g_leave_unclean_marker = true;
 		FANPRO_ERROR("daemon.stop",
 		             "reason=release_failed action=leaving_unclean_marker");
+	}
 
 	fanpro_history_close();
 	fanpro_log_close();

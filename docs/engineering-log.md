@@ -32,11 +32,11 @@ Recorded because each failure is a trap worth avoiding:
 
 `fanpro smc hold` refuses to return a verdict when the data cannot support one, and did so twice before producing the result above.
 
-## The firmware's own fan curve, measured
+## The firmware's fan response on a rising limb, measured
 
-The control fan's response during that run is macOS's curve. The shipped `safe` curve sits at or above it at every point, so enabling fanpro never makes the machine hotter than leaving it alone would.
+The control fan during `t=30..150` of that run, i.e. the **rising limb of one cold start**. This is not "macOS's curve": see the correction below.
 
-| SoC | Firmware RPM |
+| SoC | Firmware RPM, rising limb |
 |---|---|
 | 55 °C | ~1130 |
 | 60 °C | ~1160 |
@@ -46,6 +46,28 @@ The control fan's response during that run is macOS's curve. The shipped `safe` 
 | 71 °C+ | ~2510 |
 
 It also ramps down far more slowly than up: after the load stopped, the fan took roughly 16 minutes to fall from 2500 back to 1180 RPM.
+
+### Correction, 18 Sep 2026: the firmware's RPM is not a function of temperature
+
+The table above was published as "macOS's curve" and used to claim the shipped `safe` curve "sits at or above it at every point, so enabling fanpro never makes the machine hotter than leaving it alone". **That claim is false, and `data/06082026_thermal_authority.log` refutes it internally.**
+
+Reading the same trace by limb rather than by timestamp:
+
+| SoC | `curve.safe` | Firmware, rising | Firmware, settled | safe − settled |
+|---|---|---|---|---|
+| 63 °C | 1450 | ~1279-1404 | 2499 | **−1049** |
+| 64 °C | 1500 | 1374 | 2502-2510 | **−1007** |
+| 68 °C | 2067 | ~1875 | 2509 | **−442** |
+| 70 °C | 2400 | ~2225 | 2512 | **−112** |
+| 71 °C | 2567 | ~2414 | 2508 | +58 |
+
+At 64.0 °C the trace records **1374 RPM rising and 2510 RPM later**: a 1.8x spread at one temperature. The load ran for the full 420 s (trace footer: "stopped: duration elapsed after 420 s"), so the high branch is not a cooldown tail. It is the firmware's **steady state for that load**, reached while the SoC *fell* from 72.1 °C to 63 °C.
+
+So the curve is below the firmware everywhere under ~70.6 °C in steady state, and the six-point table was a time series relabelled as a function of temperature. The 16-minute ramp-down noted above was the evidence of path dependence, recorded and then not acted on.
+
+Measured live the same day at idle, with the daemon in monitor-only: SoC 53-55 °C, firmware holding **2500 RPM** on both fans, while `curve.safe` interpolates 1122-1200. Switching to curve mode dropped both fans to ~1180 RPM in one tick, because `fanpro_curve_eval` returns its raw value unslewed on the first evaluation (`src/fan/curve.c:93-98`). Nothing in the readable sensor set justifies the firmware's 2500: NAND was 42 °C and the hottest power-rail sensor 51.9 °C.
+
+**Consequence for the design, not just the docs.** `source = class:soc` is structurally incapable of bounding a firmware policy that sits at 2500 RPM while every sensor fanpro can read is cool. A floor latched at custody transfer only makes the handover smooth: at `slew_down_rpm = 100` a 2500 RPM floor decays in ~13 ticks against a firmware decay measured in minutes. Making "never worse than firmware" true needs a live reference, e.g. leaving one fan under firmware control and flooring the held fan at the unheld fan's target. Both fans receive identical firmware targets on this machine, so that reference is available. Unimplemented; recorded as design work.
 
 ## Hardware discoveries
 
