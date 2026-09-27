@@ -35,8 +35,9 @@
  * panic_ambient_c into a guard that is permanently 60 C clear of its own
  * threshold: worse than having no ambient sensor, because it looks live.
  *
- * Dropping a genuine 10.0 C reading costs nothing by comparison: it is far
- * below every panic threshold, and the class falls back to fail-open.
+ * The rejection is limited to the Ta0* keys it was measured on.  A genuine
+ * 10.0 C from any other key is kept: dropping it could empty the class a
+ * curve reads, and the safety gate then releases the fan.
  */
 #define TEMP_FIRMWARE_PLACEHOLDER 10.0
 
@@ -89,7 +90,8 @@ fanpro_smc_temp_read(fanpro_sensor_set_t *set, fanpro_smc_t *smc)
 
 		fanpro_fourcc_str(key, name);
 
-		if (v.num == TEMP_FIRMWARE_PLACEHOLDER) {
+		if (v.num == TEMP_FIRMWARE_PLACEHOLDER &&
+		    strncmp(name, "Ta0", 3) == 0) {
 			FANPRO_DEBUG("sensors.smc",
 			             "key=%s reason=firmware_placeholder value=%.1f",
 			             name, v.num);

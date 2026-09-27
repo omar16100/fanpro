@@ -194,6 +194,24 @@ TT_TEST(smc_temp_rejects_the_firmware_placeholder_reading)
 	fanpro_fake_destroy(fake);
 }
 
+/* Only the measured Ta0* keys are rejected: a real 10.0 C elsewhere stays. */
+TT_TEST(smc_temp_keeps_a_genuine_ten_degree_reading_on_other_keys)
+{
+	fanpro_fake_t *fake = fanpro_fake_create(FANPRO_FAKE_DIRECT_OK);
+	fanpro_smc_t smc;
+	fanpro_sensor_set_t set;
+
+	fanpro_fake_add_key(fake, "TB0p", "flt ", 4, 10.0);
+
+	TT_EQ_INT(fanpro_smc_open(&smc, fanpro_fake_backend(fake)), 0);
+	memset(&set, 0, sizeof(set));
+	TT_EQ_INT(fanpro_smc_temp_read(&set, &smc), 1);
+	TT_NEAR(fanpro_sensors_max_of_class(&set, FANPRO_CLASS_OTHER), 10.0, 0.0);
+
+	fanpro_smc_close(&smc);
+	fanpro_fake_destroy(fake);
+}
+
 /* Pin the classification the placeholder rejection depends on. */
 TT_TEST(sensor_classify_puts_ta0_keys_in_the_ambient_class)
 {

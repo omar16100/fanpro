@@ -15,12 +15,14 @@ Plan: [`docs/27092026_maintenance_sweep_plan.md`](docs/27092026_maintenance_swee
   into `main` via 92bdd15.
 - Review fix: `fanpro_daemon_effective_mode()` now treats a queued `reload` newer
   than any queued `set-mode` as unknown and falls back to the applied mode, so
-  `mode curve`, `reload` (file says auto), `set 3625` in one tick is refused
+  starting in auto, `mode curve`, `reload` (file says auto), `set 3625` in one tick is refused
   rather than accepted and silently dropped. Regression test added.
 - Coverage-warning test now asserts the logged warning, not just the flag.
 - Corrected wording in `etc/fanpro.conf.example`, the launchd plist comment and
   the 18 Sep plan (see the sweep plan for the list).
-- `make test`: 3772 checks, 0 failures. Nothing that touches SMC, fans or launchd
+- Narrowed the `10.0` placeholder rejection to the measured `Ta0*` keys, so a
+  genuine 10 °C on another key is kept. Test added.
+- `make test`: 3775 checks, 0 failures. Nothing that touches SMC, fans or launchd
   was run.
 - Open: no test covers the `atexit` marker path (`emergency_release` is static).
 
@@ -71,9 +73,9 @@ commits ahead, including the IOReport leak fix. Deploying ships those too.
 - Heartbeat latch policy: the two reviews disagree on whether a stall should latch.
   Deeper issue both raise: the flag is only read by a loop that is merely slow, so a
   wedged loop never sees it and `KeepAlive` will not restart a hung process.
-- Root cause of the stalls is still unknown. Both the CPU-starvation and the
-  leaked-subscription hypotheses were tested and refuted (stalls happen only near
-  idle, and at pass 8640 as well as 1,762,920). Needs per-phase tick timings.
+- Root cause of the stalls is still unknown. Neither the CPU-starvation nor the
+  leaked-subscription hypothesis is supported by the data (stalls happen only near
+  idle, and at pass 8640 as well as 1,762,920), though neither is ruled out. Needs per-phase tick timings.
 - `set all auto` / `daemon release` can reacquire in the same tick; sleep release
   silently discards `manual_override`; monitor-only still releases a fan another
   controller owns; panic hysteresis clears on SoC whichever class tripped;
