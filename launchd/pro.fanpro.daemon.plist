@@ -30,8 +30,20 @@
   <key>ThrottleInterval</key>
   <integer>30</integer>
 
+  <!--
+    Interactive, not Background.  Background caps scheduling priority (PRI 4)
+    and applies I/O throttling, and this daemon writes a history row on every
+    recorded tick.  Its heartbeat watchdog (10 s by default) only raises a
+    release request, which the control loop acts on when it next runs, so a
+    loop starved of CPU is slow to hand the fans back; a thermal controller
+    should not be competing for CPU on the machine it is protecting.
+
+    Interactive rather than Adaptive: Adaptive promotion is driven by XPC
+    activity and this server listens on a unix socket, so it would never be
+    promoted.
+  -->
   <key>ProcessType</key>
-  <string>Background</string>
+  <string>Interactive</string>
 
   <key>StandardErrorPath</key>
   <string>/var/log/fanpro/fanprod.err</string>

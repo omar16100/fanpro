@@ -10,10 +10,14 @@
 
 #include "../src/daemon/daemon.h"
 
+#include "fanpro/log.h"
 #include "fanpro/smc_fake.h"
 
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /*
  * Sensor injection.
@@ -670,6 +674,176 @@ TT_TEST(daemon_persistent_target_theft_latches)
 
 	TT_TRUE(atomic_load(&r.d.latched));
 	TT_EQ_INT(r.d.unlock.manual_count, 0);
+
+	drig_down(&r);
+}
+
+/*
+ * The mode/set race.  `fanpro mode curve && fanpro set all 3625` used to be
+ * unwinnable: the IPC thread acked the mode change before the control loop
+ * applied it, so the set gate read the still-AUTO cfg.mode and refused the
+ * speed.  Observed live on 2026-09-18, where the refusal dropped the pin and
+ * left the default curve to pull both fans from 2500 to 1180 rpm, i.e.
+ * cooling LESS than not intervening at all.
+ *
+ * Zero ticks between push and query is the whole point: a test that ticks
+ * first would pass against the broken code.
+ */
+TT_TEST(effective_mode_sees_a_queued_switch_before_any_tick)
+{
+	drig_t r;
+	fanpro_request_t req;
+
+	drig_up(&r, "[general]\nmode = auto\n");
+
+	TT_TRUE(fanpro_daemon_effective_mode(&r.d) == FANPRO_MODE_AUTO);
+
+	fanpro_request_init(&req, FANPRO_VERB_SET_MODE);
+	req.ival = 1; /* curve */
+	TT_TRUE(fanpro_daemon_push_cmd(&r.d, &req));
+
+	/* Pending, with no tick having run. */
+	TT_TRUE(fanpro_daemon_effective_mode(&r.d) == FANPRO_MODE_CURVE);
+	/* Still only pending: the loop remains the sole writer of cfg. */
+	TT_TRUE(r.d.cfg.mode == FANPRO_MODE_AUTO);
+
+	drig_down(&r);
+}
+
+TT_TEST(effective_mode_uses_the_latest_queued_switch)
+{
+	drig_t r;
+	fanpro_request_t req;
+
+	drig_up(&r, "[general]\nmode = auto\n");
+
+	fanpro_request_init(&req, FANPRO_VERB_SET_MODE);
+	req.ival = 1; /* curve */
+	TT_TRUE(fanpro_daemon_push_cmd(&r.d, &req));
+
+	fanpro_request_init(&req, FANPRO_VERB_SET_MODE);
+	req.ival = 0; /* back to auto before either is applied */
+	TT_TRUE(fanpro_daemon_push_cmd(&r.d, &req));
+
+	/* Slot order is arrival order, so the last request wins. */
+	TT_TRUE(fanpro_daemon_effective_mode(&r.d) == FANPRO_MODE_AUTO);
+
+	drig_down(&r);
+}
+
+TT_TEST(effective_mode_matches_applied_mode_once_the_queue_drains)
+{
+	drig_t r;
+	fanpro_request_t req;
+
+	drig_up(&r, "[general]\nmode = auto\n");
+
+	fanpro_request_init(&req, FANPRO_VERB_SET_MODE);
+	req.ival = 1;
+	TT_TRUE(fanpro_daemon_push_cmd(&r.d, &req));
+
+	set_soc(50.0);
+	tick(&r, 1);
+
+	/* Queue empty now, so this reads through to the applied value. */
+	TT_TRUE(r.d.cfg.mode == FANPRO_MODE_CURVE);
+	TT_TRUE(fanpro_daemon_effective_mode(&r.d) == FANPRO_MODE_CURVE);
+
+	drig_down(&r);
+}
+
+/*
+ * A reload replaces cfg.mode with whatever the config file says, which the
+ * IPC thread cannot know.  Queued after a set-mode, it must void the
+ * prediction: `mode curve`, `reload` (file says auto), `set 3625` would
+ * otherwise be accepted and then land in monitor-only, reported as success.
+ */
+TT_TEST(effective_mode_falls_back_to_applied_mode_behind_a_queued_reload)
+{
+	drig_t r;
+	fanpro_request_t req;
+
+	drig_up(&r, "[general]\nmode = auto\n");
+
+	fanpro_request_init(&req, FANPRO_VERB_SET_MODE);
+	req.ival = 1; /* curve */
+	TT_TRUE(fanpro_daemon_push_cmd(&r.d, &req));
+	TT_TRUE(fanpro_daemon_effective_mode(&r.d) == FANPRO_MODE_CURVE);
+
+	fanpro_request_init(&req, FANPRO_VERB_RELOAD);
+	TT_TRUE(fanpro_daemon_push_cmd(&r.d, &req));
+
+	/* Outcome of the reload unknown: answer with the applied mode. */
+	TT_TRUE(fanpro_daemon_effective_mode(&r.d) == FANPRO_MODE_AUTO);
+
+	/* A set-mode queued after the reload is the newest again, and wins. */
+	fanpro_request_init(&req, FANPRO_VERB_SET_MODE);
+	req.ival = 1;
+	TT_TRUE(fanpro_daemon_push_cmd(&r.d, &req));
+	TT_TRUE(fanpro_daemon_effective_mode(&r.d) == FANPRO_MODE_CURVE);
+
+	drig_down(&r);
+}
+
+/* Lines in a captured log file that contain every one of the needles. */
+static int
+count_log_lines(const char *path, const char *a, const char *b)
+{
+	char line[1024];
+	int n = 0;
+	FILE *f = fopen(path, "r");
+
+	if (f == NULL)
+		return -1;
+	while (fgets(line, sizeof(line), f) != NULL) {
+		if (strstr(line, a) != NULL && (b == NULL || strstr(line, b) != NULL))
+			n++;
+	}
+	fclose(f);
+	return n;
+}
+
+/*
+ * panic_ambient_c = 70 shipped in the default config while this hardware
+ * reports no ambient sensor at all, so the threshold guarded nothing and
+ * said nothing.  Warn once, after the first successful enumeration.
+ */
+TT_TEST(a_panic_threshold_guarding_no_sensor_is_reported_once)
+{
+	drig_t r;
+
+	char log_path[] = "/tmp/fanpro_test_coverage.XXXXXX";
+	fanpro_log_level_t was = fanpro_log_get_level();
+	int fd = mkstemp(log_path);
+
+	TT_TRUE(fd >= 0);
+	if (fd >= 0)
+		close(fd);
+	/* Capture the warning itself, not just the one-shot flag. */
+	TT_EQ_INT(fanpro_log_open_file(log_path, 0, 1), 0);
+	fanpro_log_set_level(FANPRO_LOG_WARN);
+
+	/* stub_sensors supplies a soc reading only; ambient stays empty. */
+	drig_up(&r, "[general]\nmode = auto\npanic_ambient_c = 70\n");
+
+	TT_TRUE(!r.d.warned_unguarded_classes);
+	set_soc(50.0);
+	tick(&r, 1);
+	TT_TRUE(r.d.warned_unguarded_classes);
+
+	/* Second pass must not re-warn. */
+	set_soc(50.0);
+	tick(&r, 1);
+	TT_TRUE(r.d.warned_unguarded_classes);
+
+	fanpro_log_close();
+	fanpro_log_set_level(was);
+
+	/* Exactly one warning for the empty ambient class, across both ticks,
+	 * and none for the soc class, which does have a reading. */
+	TT_EQ_INT(count_log_lines(log_path, "safety.coverage", "class=ambient"), 1);
+	TT_EQ_INT(count_log_lines(log_path, "safety.coverage", "class=soc"), 0);
+	unlink(log_path);
 
 	drig_down(&r);
 }

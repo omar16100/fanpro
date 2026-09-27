@@ -150,18 +150,21 @@ serve_one(fanpro_daemon_t *d, int fd)
 	 * effect of a speed request.
 	 */
 	if (req.verb == FANPRO_VERB_SET_FAN && !isnan(req.rpm)) {
-		fanpro_mode_t mode;
-
-		pthread_mutex_lock(&d->cfg_lock);
-		mode = d->cfg.mode;
-		pthread_mutex_unlock(&d->cfg_lock);
+		/*
+		 * The EFFECTIVE mode, not cfg.mode: a set-mode queued moments
+		 * ago has not been applied yet, and gating on the applied value
+		 * refuses `fanpro mode curve && fanpro set ...` for up to a
+		 * whole tick after the mode request was already accepted.
+		 */
+		fanpro_mode_t mode = fanpro_daemon_effective_mode(d);
 
 		if (mode == FANPRO_MODE_AUTO) {
 			resp.status = -4;
 			snprintf(resp.message, sizeof(resp.message),
-			         "fanprod is in monitor-only mode, so this would have "
-			         "no effect. run 'fanpro mode curve' first to let "
-			         "fanpro drive the fans.");
+			         "fanprod is in monitor-only mode, so this would "
+			         "have no effect. run 'fanpro mode curve' to let "
+			         "fanpro drive the fans, and check 'fanpro status' "
+			         "reports mode curve before setting a speed.");
 			FANPRO_WARN("ipc.request",
 			            "verb=set-fan reason=refused_in_auto_mode");
 			fanpro_proto_write_all(fd, &resp, sizeof(resp));

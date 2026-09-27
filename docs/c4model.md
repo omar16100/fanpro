@@ -50,7 +50,7 @@ Boundary rule: **no SMC write occurs outside `fanprod`.** `fanpro` never opens a
 |---|---|---|
 | control loop | `src/daemon/control_loop.c` | 1 Hz: sample, detect drift, evaluate, gate, write, record |
 | heartbeat | `src/daemon/heartbeat.c` | Independent thread; watches an atomic tick counter and raises a release-requested flag. Never touches the SMC itself |
-| ipc server | `src/daemon/ipc_server.c` | Unix socket, `LOCAL_PEERCRED` peer auth, refuses a manual speed while in monitor-only mode |
+| ipc server | `src/daemon/ipc_server.c` | Unix socket, `LOCAL_PEERCRED` peer auth, refuses a manual speed while in monitor-only mode. The mode it gates on is the effective mode (`fanpro_daemon_effective_mode()` in `fanprod.c`): the newest queued `set-mode`, else `cfg.mode`, so `fanpro mode curve && fanpro set ...` is not refused while the mode change waits for the next tick. A queued `reload` newer than any queued `set-mode` makes it fall back to `cfg.mode`, because the reloaded mode is unknown. Residual: a `set-mode` already drained into the loop's batch but not yet applied is invisible, in either direction, for as long as the commands ahead of it take |
 | power notify | `src/daemon/power_notify.c` | `IORegisterForSystemPower`: release on sleep and power-off, re-probe on wake |
 | history | `src/daemon/history.c` | JSONL sample log, daily rotation, retention pruning |
 | alerts | `src/daemon/alerts.c` | Threshold rules with hysteresis; notifications via `posix_spawn`, never a shell |
@@ -109,11 +109,13 @@ Fixed and load-bearing, because on this hardware nothing else will free a pinned
 
 `/var/run` is cleared on reboot, so a reboot reads as a clean start rather than an unclean exit, which is what we want.
 
+When `main`'s own release fails it leaves the unclean marker in place, and the `atexit` handler honours that: it skips the clean-exit mark when `main` flagged a failed release or its own release fails, so the next start latches.
+
 ## Concurrency
 
 **The control loop thread is the sole owner of the SMC handle, the fan set, and the unlock state.** Nothing else calls into `smc`, `fan`, or `unlock`.
 
-The heartbeat watchdog runs on its own thread but only reads an atomic tick counter and sets an atomic release-requested flag; the control loop notices the flag and performs the release. The IPC server accepts and parses requests on its own thread, then hands validated commands to the control loop through a queue.
+The heartbeat watchdog runs on its own thread but only reads an atomic tick counter and sets an atomic release-requested flag; the control loop notices the flag and performs the release. The IPC server accepts and parses requests on its own thread, then hands validated commands to the control loop through a queue. The IPC thread may also read that queue, under `cmd_lock`, to learn the effective mode; it never writes `cfg`, which stays owned by the control loop.
 
 This is chosen over locking the unlock state. A watchdog calling release while the loop sits between asserting `Ftst` and incrementing the manual refcount would clear `Ftst` from under a fan about to be marked held, which is the exact failure the refcount exists to prevent. Single ownership removes the race rather than guarding it.
 

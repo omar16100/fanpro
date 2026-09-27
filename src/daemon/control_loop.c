@@ -508,6 +508,46 @@ drive_fan(fanpro_daemon_t *d, int i, int thermal_level)
 	return true;
 }
 
+/*
+ * A panic threshold configured for a class that no sensor reports is dead:
+ * safety.c skips a class whose hottest reading is not finite, so the limit
+ * silently guards nothing.  That is the right fail-open behaviour, but it
+ * must not be invisible, which is how panic_ambient_c = 70 and the GPU class
+ * both came to look live while protecting nothing on this hardware.
+ *
+ * Deliberately after the first SUCCESSFUL enumeration rather than at init:
+ * d->sensors is empty until then, so every class would look unguarded.
+ */
+static void
+warn_once_on_unguarded_classes(fanpro_daemon_t *d)
+{
+	int cls;
+
+	if (d->warned_unguarded_classes)
+		return;
+	d->warned_unguarded_classes = true;
+
+	for (cls = 0; cls < FANPRO_CLASS_COUNT; cls++) {
+		double limit;
+
+		pthread_mutex_lock(&d->cfg_lock);
+		limit = d->cfg.safety.panic_c[cls];
+		pthread_mutex_unlock(&d->cfg_lock);
+
+		if (!isfinite(limit))
+			continue;
+		if (isfinite(fanpro_sensors_max_of_class(
+		        &d->sensors, (fanpro_sensor_class_t)cls)))
+			continue;
+
+		FANPRO_WARN("safety.coverage",
+		            "class=%s panic_c=%.1f sensors=0 "
+		            "reason=threshold_guards_nothing",
+		            fanpro_sensor_class_name((fanpro_sensor_class_t)cls),
+		            limit);
+	}
+}
+
 void
 fanpro_control_loop_tick(fanpro_daemon_t *d, unsigned long long pass)
 {
@@ -590,8 +630,10 @@ fanpro_control_loop_tick(fanpro_daemon_t *d, unsigned long long pass)
 	if (d->sample_sensors(&d->sensors, &d->smc, false) != 0 ||
 	    d->sensors.count == 0)
 		d->sample_failures++;
-	else
+	else {
 		d->sample_failures = 0;
+		warn_once_on_unguarded_classes(d);
+	}
 
 	fanpro_fan_refresh(&d->smc, &d->fans);
 	thermal_level = fanpro_thermal_pressure_read();

@@ -22,6 +22,25 @@
 #define TEMP_MIN_PLAUSIBLE (-40.0)
 #define TEMP_MAX_PLAUSIBLE 150.0
 
+/*
+ * A firmware placeholder, not a measurement.  Measured on Mac15,14 (Mac
+ * Studio M3 Ultra): Ta09, Ta0H, Ta0L, Ta0P and ftA0 all return the identical
+ * flt payload 00 00 20 41, which decodes exactly to 10.0.  flt-to-double is
+ * exact, so comparing the decoded value is the same test as comparing those
+ * four bytes, with less code.
+ *
+ * This matters beyond a cosmetic wrong reading.  registry.c classifies Ta0*
+ * as the ambient class, and safety.c skips a class whose reading is not
+ * finite but honours one that is.  Admitting a constant 10.0 would turn
+ * panic_ambient_c into a guard that is permanently 60 C clear of its own
+ * threshold: worse than having no ambient sensor, because it looks live.
+ *
+ * The rejection is limited to the Ta0* keys it was measured on.  A genuine
+ * 10.0 C from any other key is kept: dropping it could empty the class a
+ * curve reads, and the safety gate then releases the fan.
+ */
+#define TEMP_FIRMWARE_PLACEHOLDER 10.0
+
 /* Would this reading already have come from the HID provider? */
 static bool
 already_present(const fanpro_sensor_set_t *set, const char *name)
@@ -70,6 +89,14 @@ fanpro_smc_temp_read(fanpro_sensor_set_t *set, fanpro_smc_t *smc)
 			continue;
 
 		fanpro_fourcc_str(key, name);
+
+		if (v.num == TEMP_FIRMWARE_PLACEHOLDER &&
+		    strncmp(name, "Ta0", 3) == 0) {
+			FANPRO_DEBUG("sensors.smc",
+			             "key=%s reason=firmware_placeholder value=%.1f",
+			             name, v.num);
+			continue;
+		}
 		if (already_present(set, name))
 			continue;
 
