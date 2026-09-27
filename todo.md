@@ -13,15 +13,24 @@ Plan: [`docs/27092026_maintenance_sweep_plan.md`](docs/27092026_maintenance_swee
   atexit handler honouring a failed release, both from the 18 Sep change.
 - Deleting remote branch `fix/ioreport-subscription-leak` (b7bb03d), already merged
   into `main` via 92bdd15.
-- `make test`: 3760 checks, 0 failures. Nothing that touches SMC, fans or launchd
+- Review fix: `fanpro_daemon_effective_mode()` now treats a queued `reload` newer
+  than any queued `set-mode` as unknown and falls back to the applied mode, so
+  `mode curve`, `reload` (file says auto), `set 3625` in one tick is refused
+  rather than accepted and silently dropped. Regression test added.
+- Coverage-warning test now asserts the logged warning, not just the flag.
+- Corrected wording in `etc/fanpro.conf.example`, the launchd plist comment and
+  the 18 Sep plan (see the sweep plan for the list).
+- `make test`: 3772 checks, 0 failures. Nothing that touches SMC, fans or launchd
   was run.
+- Open: no test covers the `atexit` marker path (`emergency_release` is static).
 
 ## 2026-09-18 - thermal custody findings (branch `fix/thermal-custody-findings-18092026`)
 
 Prompted by 15 `Thermal Emergency Sleep` events, 14:37:54-14:40:41, then a reboot.
 Cause was three ~185 W LLM benchmark arms taking the SoC to 83.2 °C. fanpro was
-holding both fans at 3625 (max) at the instant of the first sleep, so it did not
-cause the emergency and could not have prevented it. Full write-up:
+holding both fans at 3625 (max) at the instant of the first sleep, so it was not
+under-driving the fans at that moment (whether earlier, higher speeds would have
+helped is not established). Full write-up:
 [`docs/18092026_thermal_custody_findings_plan.md`](docs/18092026_thermal_custody_findings_plan.md).
 
 **Done.**

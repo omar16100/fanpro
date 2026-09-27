@@ -50,7 +50,7 @@ Boundary rule: **no SMC write occurs outside `fanprod`.** `fanpro` never opens a
 |---|---|---|
 | control loop | `src/daemon/control_loop.c` | 1 Hz: sample, detect drift, evaluate, gate, write, record |
 | heartbeat | `src/daemon/heartbeat.c` | Independent thread; watches an atomic tick counter and raises a release-requested flag. Never touches the SMC itself |
-| ipc server | `src/daemon/ipc_server.c` | Unix socket, `LOCAL_PEERCRED` peer auth, refuses a manual speed while in monitor-only mode. The mode it gates on is the effective mode (`fanpro_daemon_effective_mode()` in `fanprod.c`): the newest queued `set-mode`, else `cfg.mode`, so `fanpro mode curve && fanpro set ...` is not refused while the mode change waits for the next tick |
+| ipc server | `src/daemon/ipc_server.c` | Unix socket, `LOCAL_PEERCRED` peer auth, refuses a manual speed while in monitor-only mode. The mode it gates on is the effective mode (`fanpro_daemon_effective_mode()` in `fanprod.c`): the newest queued `set-mode`, else `cfg.mode`, so `fanpro mode curve && fanpro set ...` is not refused while the mode change waits for the next tick. A queued `reload` newer than any queued `set-mode` makes it fall back to `cfg.mode`, because the reloaded mode is unknown. Residual: a `set-mode` already drained into the loop's batch but not yet applied is invisible, in either direction, for as long as the commands ahead of it take |
 | power notify | `src/daemon/power_notify.c` | `IORegisterForSystemPower`: release on sleep and power-off, re-probe on wake |
 | history | `src/daemon/history.c` | JSONL sample log, daily rotation, retention pruning |
 | alerts | `src/daemon/alerts.c` | Threshold rules with hysteresis; notifications via `posix_spawn`, never a shell |

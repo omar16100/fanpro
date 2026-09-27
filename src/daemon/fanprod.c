@@ -130,18 +130,27 @@ fanpro_daemon_effective_mode(fanpro_daemon_t *d)
 	/*
 	 * Slot order is arrival order: push_cmd fills from slot 0 upwards and
 	 * drain_commands frees every slot in one pass, so the highest used
-	 * set-mode slot is the most recent request.  The locks are taken one
+	 * slot of a given kind is the most recent such request.  The locks are taken one
 	 * at a time, never nested, so this cannot deadlock against the loop.
+	 *
+	 * A reload also replaces cfg.mode, with whatever the config file says,
+	 * which cannot be known from here.  So the newest mode-changing
+	 * request is the one that counts, and when that is a reload the
+	 * prediction is abandoned in favour of the applied mode: the same
+	 * answer this gate gave before it looked at the queue at all.
 	 */
 	pthread_mutex_lock(&d->cmd_lock);
 	for (i = 0; i < FANPRO_CMD_QUEUE_LEN; i++) {
 		if (d->cmd[i].used &&
-		    d->cmd[i].req.verb == FANPRO_VERB_SET_MODE)
+		    (d->cmd[i].req.verb == FANPRO_VERB_SET_MODE ||
+		     d->cmd[i].req.verb == FANPRO_VERB_RELOAD))
 			latest = i;
 	}
-	if (latest >= 0)
+	if (latest >= 0 && d->cmd[latest].req.verb == FANPRO_VERB_SET_MODE)
 		mode = (d->cmd[latest].req.ival == 1) ? FANPRO_MODE_CURVE
 		                                      : FANPRO_MODE_AUTO;
+	else
+		latest = -1;
 	pthread_mutex_unlock(&d->cmd_lock);
 
 	if (latest >= 0)

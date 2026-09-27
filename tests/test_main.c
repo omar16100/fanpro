@@ -174,6 +174,7 @@ TT_DECL(daemon_switching_to_auto_releases_everything);
 TT_DECL(effective_mode_sees_a_queued_switch_before_any_tick);
 TT_DECL(effective_mode_uses_the_latest_queued_switch);
 TT_DECL(effective_mode_matches_applied_mode_once_the_queue_drains);
+TT_DECL(effective_mode_falls_back_to_applied_mode_behind_a_queued_reload);
 TT_DECL(a_panic_threshold_guarding_no_sensor_is_reported_once);
 TT_DECL(smc_temp_rejects_the_firmware_placeholder_reading);
 TT_DECL(sensor_classify_puts_ta0_keys_in_the_ambient_class);
@@ -380,6 +381,7 @@ main(void)
 	TT_RUN(effective_mode_sees_a_queued_switch_before_any_tick);
 	TT_RUN(effective_mode_uses_the_latest_queued_switch);
 	TT_RUN(effective_mode_matches_applied_mode_once_the_queue_drains);
+	TT_RUN(effective_mode_falls_back_to_applied_mode_behind_a_queued_reload);
 	TT_RUN(a_panic_threshold_guarding_no_sensor_is_reported_once);
 	TT_RUN(smc_temp_rejects_the_firmware_placeholder_reading);
 	TT_RUN(sensor_classify_puts_ta0_keys_in_the_ambient_class);

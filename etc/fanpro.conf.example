@@ -32,12 +32,15 @@ panic_nand_c = 80
 # for an empty class is inert, and the daemon now warns about it once at
 # startup (`safety.coverage ... reason=threshold_guards_nothing`).
 #
-# On Mac15,14 neither of these resolves, so both are left out rather than
-# shipped looking live:
+# On Mac15,14 neither of these classes has a sensor, so both thresholds are
+# inert there:
 #   panic_gpu_c     - no GPU temperature sensor is enumerated
 #   panic_ambient_c - the four Ta0* keys are a firmware placeholder, not a
 #                     thermistor, and 70 C is not a sane enclosure limit
-# Set them if `fanpro sensors` shows readings in those classes on your Mac.
+# Commenting them out does NOT turn them off: the built-in defaults below
+# still apply, and the startup warning above still names them. They are left
+# commented here only so this example does not look as if it relies on them.
+# Tune them if `fanpro sensors` shows readings in those classes on your Mac.
 # panic_gpu_c = 95
 # panic_ambient_c = 70
 
