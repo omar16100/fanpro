@@ -1,6 +1,6 @@
 # Thermal custody findings and fixes, 18 Sep 2026
 
-Status: fixes 1-5 implemented and unit tested on `fix/thermal-custody-findings-18092026`. Not deployed. Items under "Deferred" are unstarted.
+Status: fixes 1-5 implemented and unit tested on `fix/thermal-custody-findings-18092026`, merged to `main` on 27 Sep 2026 (see [`27092026_maintenance_sweep_plan.md`](27092026_maintenance_sweep_plan.md)). Not deployed. Items under "Deferred" are unstarted.
 
 ## What prompted this
 

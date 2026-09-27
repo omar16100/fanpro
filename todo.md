@@ -2,6 +2,20 @@
 
 Running status log. Newest first.
 
+## 2026-09-27 - maintenance sweep (PR from `fix/thermal-custody-findings-18092026`)
+
+Plan: [`docs/27092026_maintenance_sweep_plan.md`](docs/27092026_maintenance_sweep_plan.md).
+
+- Publishing the 18 Sep thermal custody fixes (below) through a PR to `main`.
+- `README.md`: replaced all 20 em dashes (18 lines) with colons, commas,
+  parentheses or full stops. No wording or claims changed.
+- `docs/c4model.md`: recorded the effective-mode gate in the IPC server and the
+  atexit handler honouring a failed release, both from the 18 Sep change.
+- Deleting remote branch `fix/ioreport-subscription-leak` (b7bb03d), already merged
+  into `main` via 92bdd15.
+- `make test`: 3760 checks, 0 failures. Nothing that touches SMC, fans or launchd
+  was run.
+
 ## 2026-09-18 - thermal custody findings (branch `fix/thermal-custody-findings-18092026`)
 
 Prompted by 15 `Thermal Emergency Sleep` events, 14:37:54-14:40:41, then a reboot.

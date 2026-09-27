@@ -14,7 +14,7 @@ Monitoring works as an ordinary user with nothing installed. Driving the fans ne
 
 This was measured, not assumed. On a Mac Studio M3 Ultra under a 144 W load, a fan commanded to 1000 RPM stayed at 1021 RPM while the SoC reached 72 °C and the fan still under firmware control ramped to 2519 RPM. Zero of 390 samples showed the firmware intervening. The raw trace is in [`data/06082026_thermal_authority.log`](data/06082026_thermal_authority.log) and the analysis is in [`docs/engineering-log.md`](docs/engineering-log.md).
 
-The consequence is simple and important: **while fanpro holds a fan, fanpro is the only thermal protection that fan has.** Manual control does not mean "the fan does what I ask" — it means that fan has left the system's thermal management.
+The consequence is simple and important: **while fanpro holds a fan, fanpro is the only thermal protection that fan has.** Manual control does not mean "the fan does what I ask"; it means that fan has left the system's thermal management.
 
 Because custody matters this much, the dashboard is built around it. Each fan gets a track across its real range: `●` is where the fan actually is, `▲` is where it has been told to go, and the owner column says who is responsible for it. Cyan means fanpro is driving that fan and is the only thing protecting it. Grey means the firmware still has it.
 
@@ -26,7 +26,7 @@ That is why:
 
 - fanpro ships in **monitor-only mode**. It will not touch a fan until you deliberately enable curve mode.
 - The default curve is **derived from the firmware's own measured response** on the rising limb of a cold start, where it sits at or above that limb above ~53 °C. It does **not** bound the firmware in general: the firmware's fan policy is path dependent and uses state fanpro cannot read, so on a machine whose fans are already elevated, enabling curve mode **will slow them down**. Check `fanpro fans` first and compare against the curve before handing over.
-- Every code path that loses confidence — a stale sensor, a wedged loop, an unclean exit, another tool competing for the fans — **releases the fans back to the firmware** rather than carrying on.
+- Every code path that loses confidence (a stale sensor, a wedged loop, an unclean exit, another tool competing for the fans) **releases the fans back to the firmware** rather than carrying on.
 
 This measurement is from one machine. It is very likely to hold across Apple Silicon, but fanpro cannot promise that for hardware nobody has tested. `fanpro smc hold` will tell you what your Mac does.
 
@@ -36,7 +36,7 @@ You are still driving your own hardware. Use `fanpro smc probe` first, keep the 
 
 ## Features
 
-**Monitoring** — no daemon, no root, no installation beyond the binary:
+**Monitoring**: no daemon, no root, no installation beyond the binary:
 
 - Every temperature sensor, grouped by class (SoC, GPU, NAND, ambient, power)
 - Fan RPM, min/max limits, target and control mode
@@ -45,7 +45,7 @@ You are still driving your own hardware. Use `fanpro smc probe` first, keep the 
 - Full SMC key dump with types and raw bytes, for anyone poking at this hardware
 - `fanpro top`, a live dashboard showing fan custody, thermal headroom and trend
 
-**Control** — needs the daemon and admin rights:
+**Control**: needs the daemon and admin rights:
 
 - Temperature-to-RPM curves with hysteresis and asymmetric ramping (fast up, slow down)
 - Manual per-fan speeds
@@ -56,7 +56,7 @@ You are still driving your own hardware. Use `fanpro smc probe` first, keep the 
 ## Requirements
 
 - Apple Silicon Mac. Intel is unsupported: the code has an Intel encoding path but it has never run on Intel hardware.
-- macOS 26 (Tahoe) or later is what this is developed and tested against. Earlier versions probably work — the code probes rather than assumes — but are untested.
+- macOS 26 (Tahoe) or later is what this is developed and tested against. Earlier versions probably work (the code probes rather than assumes) but are untested.
 - Xcode command line tools. Nothing else: no Homebrew packages, no package manager, no external libraries.
 
 ### Hardware support
@@ -87,7 +87,7 @@ Monitoring works immediately. For fan control, install the daemon:
 sudo fanpro daemon install
 ```
 
-This writes a launchd plist to `/Library/LaunchDaemons` and starts `fanprod`. **No code signing, entitlement or TCC grant is required** — the SMC enforces write permission against uid, not code identity.
+This writes a launchd plist to `/Library/LaunchDaemons` and starts `fanprod`. **No code signing, entitlement or TCC grant is required**: the SMC enforces write permission against uid, not code identity.
 
 To remove it completely:
 
@@ -294,7 +294,7 @@ All of these are private API. Everything is probed at runtime and degrades indep
 
 ### Privilege model
 
-`fanprod` listens on `/var/run/fanpro.sock`, `root:admin`, mode `0660`. The CLI speaks a fixed binary protocol — not JSON, because a hand-rolled parser in a root daemon reading local user input is a poor trade for ten verbs. The daemon authenticates the peer with `LOCAL_PEERCRED`: reads are open to any identified peer, mutations need uid 0 or the `admin` group.
+`fanprod` listens on `/var/run/fanpro.sock`, `root:admin`, mode `0660`. The CLI speaks a fixed binary protocol, not JSON, because a hand-rolled parser in a root daemon reading local user input is a poor trade for ten verbs. The daemon authenticates the peer with `LOCAL_PEERCRED`: reads are open to any identified peer, mutations need uid 0 or the `admin` group.
 
 ## Safety design
 
@@ -307,7 +307,7 @@ Every proposed fan target passes through one gate, `fanpro_safety_check`. There 
 
 Around that:
 
-- **Heartbeat watchdog.** `launchd` only restarts on process exit, so a deadlocked daemon would hold fans at a stale target forever. A separate thread demands proof of life and raises a release flag. It never touches the SMC itself — the control loop is the sole owner, which removes the race rather than guarding it.
+- **Heartbeat watchdog.** `launchd` only restarts on process exit, so a deadlocked daemon would hold fans at a stale target forever. A separate thread demands proof of life and raises a release flag. It never touches the SMC itself: the control loop is the sole owner, which removes the race rather than guarding it.
 - **Crash-loop latch.** After an unclean exit, the daemon recovers the fans and then **stays in monitor-only** until you run `fanpro daemon enable`. Without it, a crashing daemon would be restarted by launchd and re-pin the fans every time.
 - **Startup recovery.** Any fan found in manual mode from a previous run is forced back to auto before anything else happens. On hardware with no `Ftst`, nothing else ever will.
 - **Drift detection.** If another fan-control tool moves a mode key or rewrites a target, fanpro stands down rather than fighting, and latches out entirely if it keeps happening.
@@ -324,15 +324,15 @@ Around that:
 
 ## Troubleshooting
 
-**`fanprod is not running`** — install it with `sudo fanpro daemon install`, or check `sudo launchctl list | grep fanpro`.
+**`fanprod is not running`**: install it with `sudo fanpro daemon install`, or check `sudo launchctl list | grep fanpro`.
 
-**`permission denied`** — mutations need the `admin` group or `sudo`. Monitoring commands never do.
+**`permission denied`**: mutations need the `admin` group or `sudo`. Monitoring commands never do.
 
-**`fanprod is in monitor-only mode, so this would have no effect`** — working as intended. Set `mode = curve` in the config and reload. fanpro refuses rather than accepting a command it would silently ignore.
+**`fanprod is in monitor-only mode, so this would have no effect`**: working as intended. Set `mode = curve` in the config and reload. fanpro refuses rather than accepting a command it would silently ignore.
 
-**`LATCHED`** — the previous run exited uncleanly, or another tool kept taking the fans. fanpro has deliberately stopped controlling them. Check `fanpro log tail`, then `sudo fanpro daemon enable`.
+**`LATCHED`**: the previous run exited uncleanly, or another tool kept taking the fans. fanpro has deliberately stopped controlling them. Check `fanpro log tail`, then `sudo fanpro daemon enable`.
 
-**Fans not responding to `set`** — run `sudo fanpro smc probe`. Your firmware may not permit manual control at all, which the probe will say plainly.
+**Fans not responding to `set`**: run `sudo fanpro smc probe`. Your firmware may not permit manual control at all, which the probe will say plainly.
 
 ## Development
 
@@ -358,7 +358,7 @@ Style: kernel-ish C, tabs, snake_case, files well under 2000 lines. Comments exp
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md). Reports from Macs other than a Mac Studio M3 Ultra are especially valuable — please include the output of `sudo fanpro smc probe` and your `sysctl -n hw.model`.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). Reports from Macs other than a Mac Studio M3 Ultra are especially valuable. Please include the output of `sudo fanpro smc probe` and your `sysctl -n hw.model`.
 
 ## Licence
 
@@ -368,7 +368,7 @@ MIT. See [`LICENSE`](LICENSE).
 
 This project would have been considerably harder without prior reverse-engineering work published by others:
 
-- [agoodkind/macos-smc-fan](https://github.com/agoodkind/macos-smc-fan) — the `Ftst` unlock mechanism, `SMCKeyData` layout, SMC result codes, and per-generation behaviour
-- [hholtmann/smcFanControl](https://github.com/hholtmann/smcFanControl) — the original SMC protocol implementation that everything in this space descends from
-- [fermion-star/apple_sensors](https://github.com/fermion-star/apple_sensors) and [btop](https://github.com/aristocratos/btop) — `IOHIDEventSystemClient` temperature enumeration
-- [smartmontools](https://github.com/smartmontools/smartmontools) — macOS NVMe SMART access
+- [agoodkind/macos-smc-fan](https://github.com/agoodkind/macos-smc-fan): the `Ftst` unlock mechanism, `SMCKeyData` layout, SMC result codes, and per-generation behaviour
+- [hholtmann/smcFanControl](https://github.com/hholtmann/smcFanControl): the original SMC protocol implementation that everything in this space descends from
+- [fermion-star/apple_sensors](https://github.com/fermion-star/apple_sensors) and [btop](https://github.com/aristocratos/btop): `IOHIDEventSystemClient` temperature enumeration
+- [smartmontools](https://github.com/smartmontools/smartmontools): macOS NVMe SMART access
